@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { createClient } from './supabase/client'
 import type { Board, Photo, Comment } from './types'
 
@@ -29,7 +29,16 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     onLoaded,
   } = props
 
-  // Load initial data
+  // Use a REF for draggingId so the subscription callback always reads
+  // the latest value without needing to tear down / recreate the channel.
+  const draggingIdRef = useRef(draggingId)
+  draggingIdRef.current = draggingId
+
+  // Also use refs for the mutation callbacks so the subscription is stable
+  const cbRef = useRef({ updatePhoto, updateBoard, addPhoto, addBoard, addComment, removePhoto, removeBoard })
+  cbRef.current = { updatePhoto, updateBoard, addPhoto, addBoard, addComment, removePhoto, removeBoard }
+
+  // Load initial data — runs once
   useEffect(() => {
     const supabase = createClient()
 
@@ -47,39 +56,43 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     }
 
     loadData()
-  }, [setPhotos, setBoards, setComments, onLoaded])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // Realtime subscriptions
+  // Realtime subscriptions — runs ONCE, never tears down/recreates
   useEffect(() => {
     const supabase = createClient()
 
     const channel = supabase
       .channel('realtime-all')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload) => {
+        const cb = cbRef.current
         if (payload.eventType === 'INSERT') {
-          addPhoto(payload.new as Photo)
+          cb.addPhoto(payload.new as Photo)
         } else if (payload.eventType === 'UPDATE') {
           const updated = payload.new as Photo
-          if (updated.id === draggingId) return
-          updatePhoto(updated.id, updated)
+          // Skip updates for the item currently being dragged locally
+          if (updated.id === draggingIdRef.current) return
+          cb.updatePhoto(updated.id, updated)
         } else if (payload.eventType === 'DELETE') {
-          removePhoto((payload.old as any).id)
+          cb.removePhoto((payload.old as any).id)
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
+        const cb = cbRef.current
         if (payload.eventType === 'INSERT') {
-          addBoard(payload.new as Board)
+          cb.addBoard(payload.new as Board)
         } else if (payload.eventType === 'UPDATE') {
           const updated = payload.new as Board
-          if (updated.id === draggingId) return
-          updateBoard(updated.id, updated)
+          if (updated.id === draggingIdRef.current) return
+          cb.updateBoard(updated.id, updated)
         } else if (payload.eventType === 'DELETE') {
-          removeBoard((payload.old as any).id)
+          cb.removeBoard((payload.old as any).id)
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, (payload) => {
         if (payload.eventType === 'INSERT') {
-          addComment(payload.new as Comment)
+          cbRef.current.addComment(payload.new as Comment)
         }
       })
       .subscribe()
@@ -87,5 +100,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [addPhoto, addBoard, addComment, updatePhoto, updateBoard, removePhoto, removeBoard, draggingId])
+    // Empty deps = subscribe once, never recreate
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 }

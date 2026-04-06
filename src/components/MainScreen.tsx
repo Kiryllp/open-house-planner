@@ -280,14 +280,19 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   }
 
   // Drag to move pin
+  // Track the last computed position so onMouseUp can persist it
+  const lastDragPosRef = useRef<{ x: number; y: number } | null>(null)
+
   function handlePinMouseDown(id: string, kind: 'photo' | 'board', e: React.MouseEvent) {
     if (e.button !== 0) return
     e.stopPropagation()
+    e.preventDefault() // prevent text selection and browser drag
 
     const item = kind === 'photo' ? photos.find((p) => p.id === id) : boards.find((b) => b.id === id)
     if (!item) return
 
     isDraggingRef.current = false
+    lastDragPosRef.current = null
     dragStartRef.current = { id, kind, startX: e.clientX, startY: e.clientY, pinX: item.pin_x, pinY: item.pin_y }
 
     function onMouseMove(ev: MouseEvent) {
@@ -307,25 +312,29 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const clampedX = Math.max(0, Math.min(100, newX))
       const clampedY = Math.max(0, Math.min(100, newY))
 
+      // Store latest position for final persist
+      lastDragPosRef.current = { x: clampedX, y: clampedY }
+
       if (kind === 'photo') updatePhoto(id, { pin_x: clampedX, pin_y: clampedY })
       else updateBoard(id, { pin_x: clampedX, pin_y: clampedY })
-
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-      debounceRef.current = setTimeout(() => {
-        if (kind === 'photo') updatePhotoDb(id, { pin_x: clampedX, pin_y: clampedY })
-        else updateBoardDb(id, { pin_x: clampedX, pin_y: clampedY })
-      }, 150)
     }
 
     function onMouseUp() {
-      if (isDraggingRef.current && debounceRef.current) {
-        clearTimeout(debounceRef.current)
-      }
-      dragStartRef.current = null
-      setDraggingId(null)
-      setTimeout(() => { isDraggingRef.current = false }, 0)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+
+      // Persist final position BEFORE clearing draggingId
+      if (isDraggingRef.current && lastDragPosRef.current) {
+        const { x, y } = lastDragPosRef.current
+        if (kind === 'photo') updatePhotoDb(id, { pin_x: x, pin_y: y })
+        else updateBoardDb(id, { pin_x: x, pin_y: y })
+      }
+
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      dragStartRef.current = null
+      lastDragPosRef.current = null
+      setDraggingId(null)
+      setTimeout(() => { isDraggingRef.current = false }, 0)
     }
 
     window.addEventListener('mousemove', onMouseMove)
@@ -415,6 +424,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   }
 
   // Cone handle drag — single tip handle controls direction + length
+  const lastConeRef = useRef<{ direction_deg: number; cone_length: number } | null>(null)
+
   function handleConeHandleMouseDown(e: React.MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
@@ -424,6 +435,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     const photoId = photoSnap.id
     const pinX = photoSnap.pin_x
     const pinY = photoSnap.pin_y
+    lastConeRef.current = null
+    setDraggingId(photoId) // prevents realtime snap-back
 
     function onMouseMove(ev: MouseEvent) {
       const pos = screenToPercent(ev.clientX, ev.clientY)
@@ -441,19 +454,18 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const dyPx = (dy / 100) * rect.height
       const dist = Math.hypot(dxPx, dyPx)
       const newLength = Math.max(30, Math.min(300, dist))
+      lastConeRef.current = { direction_deg: angle, cone_length: newLength }
       updatePhoto(photoId, { direction_deg: angle, cone_length: newLength })
     }
 
     function onMouseUp() {
-      setPhotos(prev => {
-        const current = prev.find(p => p.id === photoId)
-        if (current) {
-          updatePhotoDb(photoId, { direction_deg: current.direction_deg, cone_length: current.cone_length })
-        }
-        return prev
-      })
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      if (lastConeRef.current) {
+        updatePhotoDb(photoId, lastConeRef.current)
+      }
+      lastConeRef.current = null
+      setDraggingId(null)
     }
 
     window.addEventListener('mousemove', onMouseMove)
@@ -461,6 +473,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   }
 
   // Board rotate handle — controls facing_deg (which also rotates the board cone)
+  const lastBoardAngleRef = useRef<number | null>(null)
+
   function handleBoardRotateMouseDown(e: React.MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
@@ -470,6 +484,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     const boardId = boardSnap.id
     const pinX = boardSnap.pin_x
     const pinY = boardSnap.pin_y
+    lastBoardAngleRef.current = null
+    setDraggingId(boardId) // prevents realtime snap-back
 
     function onMouseMove(ev: MouseEvent) {
       const pos = screenToPercent(ev.clientX, ev.clientY)
@@ -478,17 +494,18 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const dy = pos.y - pinY
       let angle = Math.atan2(dy, dx) * (180 / Math.PI)
       if (ev.shiftKey) angle = Math.round(angle / 5) * 5
+      lastBoardAngleRef.current = angle
       updateBoard(boardId, { facing_deg: angle })
     }
 
     function onMouseUp() {
-      setBoards(prev => {
-        const current = prev.find(b => b.id === boardId)
-        if (current) updateBoardDb(boardId, { facing_deg: current.facing_deg })
-        return prev
-      })
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      if (lastBoardAngleRef.current !== null) {
+        updateBoardDb(boardId, { facing_deg: lastBoardAngleRef.current })
+      }
+      lastBoardAngleRef.current = null
+      setDraggingId(null)
     }
 
     window.addEventListener('mousemove', onMouseMove)
