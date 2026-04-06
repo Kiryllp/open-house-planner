@@ -18,6 +18,8 @@ import type { Photo, Board, Comment, Annotation, ActivityEntry } from '@/lib/typ
 import { insertAnnotation, updateAnnotationDb, insertActivity } from '@/lib/supabaseActions'
 import { AnnotationLayer } from './AnnotationLayer'
 import { DrawToolbar } from './DrawToolbar'
+import { DrawPreview } from './DrawPreview'
+import { AnnotationEditor } from './AnnotationEditor'
 import { TopBar } from './TopBar'
 import { SidePanel } from './SidePanel'
 import { PhotoPin } from './PhotoPin'
@@ -87,6 +89,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const [drawFillOpacity, setDrawFillOpacity] = useState(0.2)
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [drawingPoints, setDrawingPoints] = useState<{ x: number; y: number }[]>([])
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const [pendingAnnotation, setPendingAnnotation] = useState<{ data: Omit<Annotation, 'id' | 'created_at'>; screenPos: { x: number; y: number } } | null>(null)
 
   // Refs
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -441,19 +445,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       if (!pos) return
 
       if (drawMode === 'text') {
-        const label = prompt('Enter label text:')
-        if (label) {
-          insertAnnotation({
-            type: 'text',
-            points: [{ x: pos.x, y: pos.y }],
-            label,
-            color: drawColor,
-            fill_opacity: 0,
-            stroke_width: 2,
-            deleted_at: null,
-            created_by_name: userName,
-          }).catch(() => toast.error('Failed to add annotation'))
-        }
+        // Show inline label input instead of prompt()
+        setPendingAnnotation({
+          data: { type: 'text', points: [{ x: pos.x, y: pos.y }], label: '', color: drawColor, fill_opacity: 0, stroke_width: 2, deleted_at: null, created_by_name: userName },
+          screenPos: { x: e.clientX, y: e.clientY },
+        })
         return
       }
 
@@ -462,17 +458,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           setDrawingPoints([{ x: pos.x, y: pos.y }])
           return
         } else {
-          const label = prompt('Label for rectangle (optional):') || ''
-          insertAnnotation({
-            type: 'rectangle',
-            points: [drawingPoints[0], { x: pos.x, y: pos.y }],
-            label,
-            color: drawColor,
-            fill_opacity: drawFillOpacity,
-            stroke_width: 2,
-            deleted_at: null,
-            created_by_name: userName,
-          }).catch(() => toast.error('Failed to add annotation'))
+          setPendingAnnotation({
+            data: { type: 'rectangle', points: [drawingPoints[0], { x: pos.x, y: pos.y }], label: '', color: drawColor, fill_opacity: drawFillOpacity, stroke_width: 2, deleted_at: null, created_by_name: userName },
+            screenPos: { x: e.clientX, y: e.clientY },
+          })
           setDrawingPoints([])
           return
         }
@@ -493,26 +482,37 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   function handleCanvasDoubleClick(e: React.MouseEvent) {
     if (drawMode === 'polygon' && drawingPoints.length >= 3) {
-      const label = prompt('Label for polygon (optional):') || ''
-      insertAnnotation({
-        type: 'polygon',
-        points: drawingPoints,
-        label,
-        color: drawColor,
-        fill_opacity: drawFillOpacity,
-        stroke_width: 2,
-        deleted_at: null,
-        created_by_name: userName,
-      }).catch(() => toast.error('Failed to add annotation'))
+      setPendingAnnotation({
+        data: { type: 'polygon', points: [...drawingPoints], label: '', color: drawColor, fill_opacity: drawFillOpacity, stroke_width: 2, deleted_at: null, created_by_name: userName },
+        screenPos: { x: e.clientX, y: e.clientY },
+      })
       setDrawingPoints([])
     }
   }
 
-  // Keyboard delete
+  // Finalize pending annotation with label
+  async function finalizePendingAnnotation(label: string) {
+    if (!pendingAnnotation) return
+    try {
+      await insertAnnotation({ ...pendingAnnotation.data, label })
+      toast.success('Annotation added')
+    } catch { toast.error('Failed to add annotation') }
+    setPendingAnnotation(null)
+  }
+
+  // Keyboard: Delete + ESC
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA' || (e.target as HTMLElement).tagName === 'SELECT') return
+
+      if (e.key === 'Escape') {
+        if (drawingPoints.length > 0) { setDrawingPoints([]); return }
+        if (drawMode !== 'none') { setDrawMode('none'); setDrawingPoints([]); return }
+        if (pendingAnnotation) { setPendingAnnotation(null); return }
+        if (selectedAnnotationId) { setSelectedAnnotationId(null); return }
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA' || (e.target as HTMLElement).tagName === 'SELECT') return
         handleSoftDelete()
       }
     }
@@ -520,7 +520,30 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   })
 
+  // Canvas mousemove for draw preview
+  function handleCanvasMouseMove(e: React.MouseEvent) {
+    if (drawMode === 'none') return
+    const pos = screenToPercent(e.clientX, e.clientY)
+    if (pos) setMousePos(pos)
+  }
+
   async function handleSoftDelete() {
+    // Phase 4: annotation deletion
+    if (selectedAnnotationId) {
+      const now = new Date().toISOString()
+      const capturedId = selectedAnnotationId
+      updateAnnotation(capturedId, { deleted_at: now })
+      updateAnnotationDb(capturedId, { deleted_at: now })
+      toast('Annotation deleted', {
+        action: { label: 'Undo', onClick: async () => {
+          updateAnnotation(capturedId, { deleted_at: null })
+          await updateAnnotationDb(capturedId, { deleted_at: null })
+        }}
+      })
+      setSelectedAnnotationId(null)
+      return
+    }
+
     if (!selectedId || !selectedKind) return
     const now = new Date().toISOString()
     const capturedId = selectedId
@@ -1062,7 +1085,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
               maxScale={5}
               initialScale={1}
               centerOnInit
-              panning={{ excluded: ['pin-element', 'handle-element'] }}
+              panning={{ excluded: ['pin-element', 'handle-element'], disabled: drawMode !== 'none' }}
             >
               <TransformComponent
                 wrapperStyle={{ width: '100%', height: '100%' }}
@@ -1073,7 +1096,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   className="relative"
                   onClick={handleCanvasClick}
                   onDoubleClick={handleCanvasDoubleClick}
-                  style={{ pointerEvents: 'auto' }}
+                  onMouseMove={handleCanvasMouseMove}
+                  style={{ pointerEvents: 'auto', cursor: drawMode !== 'none' ? 'crosshair' : undefined }}
                 >
                   {floorplanUrl ? (
                     <img
@@ -1130,8 +1154,17 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   <AnnotationLayer
                     annotations={annotations}
                     selectedId={selectedAnnotationId}
-                    onSelect={(id) => setSelectedAnnotationId(id)}
+                    onSelect={(id) => { setSelectedAnnotationId(id); select(null, null) }}
                     visible={showAnnotations}
+                  />
+
+                  {/* Draw preview for in-progress shapes */}
+                  <DrawPreview
+                    mode={drawMode}
+                    points={drawingPoints}
+                    mousePos={mousePos}
+                    color={drawColor}
+                    fillOpacity={drawFillOpacity}
                   />
                 </div>
               </TransformComponent>
@@ -1146,6 +1179,66 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
               onSetColor={setDrawColor}
               onSetFillOpacity={setDrawFillOpacity}
             />
+
+            {/* Draw mode hint */}
+            {drawMode !== 'none' && (
+              <div className="absolute top-14 left-3 bg-gray-900/80 text-white text-xs px-3 py-1.5 rounded-lg z-30 pointer-events-none">
+                {drawMode === 'text' && 'Click to place text label'}
+                {drawMode === 'rectangle' && drawingPoints.length === 0 && 'Click first corner'}
+                {drawMode === 'rectangle' && drawingPoints.length === 1 && 'Click opposite corner'}
+                {drawMode === 'polygon' && drawingPoints.length < 3 && `Click to add points (${drawingPoints.length}/3 min)`}
+                {drawMode === 'polygon' && drawingPoints.length >= 3 && `${drawingPoints.length} points — double-click to finish`}
+                <span className="ml-2 opacity-60">ESC to cancel</span>
+              </div>
+            )}
+
+            {/* Pending label input (replaces prompt()) */}
+            {pendingAnnotation && (
+              <>
+                <div className="fixed inset-0 z-[58]" onClick={() => finalizePendingAnnotation('')} />
+                <div className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 p-3 z-[59] w-56"
+                  style={{ left: Math.min(pendingAnnotation.screenPos.x + 12, window.innerWidth - 240), top: Math.min(pendingAnnotation.screenPos.y - 10, window.innerHeight - 80) }}>
+                  <div className="text-[10px] text-gray-400 font-medium mb-1">Label {pendingAnnotation.data.type !== 'text' && '(optional)'}</div>
+                  <form onSubmit={(e) => { e.preventDefault(); const input = (e.target as HTMLFormElement).elements.namedItem('label') as HTMLInputElement; finalizePendingAnnotation(input.value) }}>
+                    <input name="label" autoFocus placeholder="Enter label..." className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 mb-2" />
+                    <div className="flex gap-1.5">
+                      <button type="submit" className="flex-1 text-xs bg-blue-600 text-white py-1 rounded-lg hover:bg-blue-700">Add</button>
+                      <button type="button" onClick={() => { if (pendingAnnotation.data.type !== 'text') finalizePendingAnnotation(''); else setPendingAnnotation(null) }} className="flex-1 text-xs bg-gray-100 text-gray-600 py-1 rounded-lg hover:bg-gray-200">
+                        {pendingAnnotation.data.type !== 'text' ? 'Skip label' : 'Cancel'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </>
+            )}
+
+            {/* Annotation editor (floating panel for selected annotation) */}
+            {selectedAnnotationId && (() => {
+              const ann = annotations.find(a => a.id === selectedAnnotationId)
+              if (!ann) return null
+              // Compute screen position from annotation centroid
+              const img = floorplanRef.current
+              const centroid = ann.points.length > 0
+                ? { x: ann.points.reduce((s: number, p: any) => s + p.x, 0) / ann.points.length, y: ann.points.reduce((s: number, p: any) => s + p.y, 0) / ann.points.length }
+                : { x: 50, y: 50 }
+              let screenX = 400, screenY = 300
+              if (img) {
+                const rect = img.getBoundingClientRect()
+                screenX = rect.left + (centroid.x / 100) * rect.width
+                screenY = rect.top + (centroid.y / 100) * rect.height
+              }
+              return (
+                <AnnotationEditor
+                  annotation={ann}
+                  position={{ x: screenX, y: screenY }}
+                  onUpdateLabel={(label) => { updateAnnotation(ann.id, { label }); updateAnnotationDb(ann.id, { label }) }}
+                  onUpdateColor={(color) => { updateAnnotation(ann.id, { color }); updateAnnotationDb(ann.id, { color }) }}
+                  onUpdateFillOpacity={(fill_opacity) => { updateAnnotation(ann.id, { fill_opacity }); updateAnnotationDb(ann.id, { fill_opacity }) }}
+                  onDelete={() => handleSoftDelete()}
+                  onClose={() => setSelectedAnnotationId(null)}
+                />
+              )
+            })()}
 
             {/* Drag-over feedback overlay */}
             {dragOverCount > 0 && (
