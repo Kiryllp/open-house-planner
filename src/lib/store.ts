@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext } from 'react'
-import type { Board, Photo, Comment } from './types'
+import type { Board, Photo, Comment, Annotation, ActivityEntry } from './types'
 
 export interface AppState {
   photos: Photo[]
@@ -20,6 +20,11 @@ export interface AppState {
   topCarouselCollapsed: boolean
   bottomCarouselCollapsed: boolean
   selectedPhotoIds: Set<string>
+  annotations: Annotation[]
+  activityLog: ActivityEntry[]
+  showAnnotations: boolean
+  coneOpacity: number // 0-1, default 0.7
+  drawMode: 'none' | 'text' | 'rectangle' | 'polygon'
 }
 
 export interface AppActions {
@@ -42,6 +47,15 @@ export interface AppActions {
   clearPhotoSelection: () => void
   toggleTopCarousel: () => void
   toggleBottomCarousel: () => void
+  setAnnotations: (annotations: Annotation[]) => void
+  addAnnotation: (annotation: Annotation) => void
+  updateAnnotation: (id: string, updates: Partial<Annotation>) => void
+  removeAnnotation: (id: string) => void
+  setActivityLog: (log: ActivityEntry[]) => void
+  addActivityEntry: (entry: ActivityEntry) => void
+  setShowAnnotations: (show: boolean) => void
+  setConeOpacity: (opacity: number) => void
+  setDrawMode: (mode: 'none' | 'text' | 'rectangle' | 'polygon') => void
 }
 
 export const AppContext = createContext<(AppState & AppActions) | null>(null)

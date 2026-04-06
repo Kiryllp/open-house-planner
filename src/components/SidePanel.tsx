@@ -6,9 +6,10 @@ import { updatePhotoDb, updateBoardDb, insertComment } from '@/lib/supabaseActio
 import {
   X, Camera, Lightbulb, Trash2, RotateCcw, Send,
   Info, Compass, StickyNote, LayoutGrid, MessageSquare, Eye, Crosshair,
-  Tag, Link2,
+  Tag, Link2, Palette,
 } from 'lucide-react'
 import { TagPicker } from './TagPicker'
+import { ColorPicker } from './ColorPicker'
 import type { Photo, Board, Comment } from '@/lib/types'
 
 /* ------------------------------------------------------------------ */
@@ -334,6 +335,21 @@ function PhotoPanel({
 
         <Divider />
 
+        {/* Color */}
+        <div className="px-4 py-3">
+          <SectionHeader icon={Palette} label="Color" />
+          <ColorPicker
+            color={photo.color || null}
+            onChange={async (newColor) => {
+              updatePhoto(photo.id, { color: newColor })
+              await updatePhotoDb(photo.id, { color: newColor })
+            }}
+            recentColors={allPhotos.filter(p => p.color).map(p => p.color!).filter((v, i, a) => a.indexOf(v) === i).slice(0, 5)}
+          />
+        </div>
+
+        <Divider />
+
         {/* Camera / Cone section */}
         <div className="px-4 py-3">
           <SectionHeader icon={Crosshair} label="Camera" />
@@ -622,6 +638,21 @@ function BoardPanel({
             onChange={(e) => setLabel(e.target.value)}
             onBlur={handleLabelBlur}
             className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+          />
+        </div>
+
+        <Divider />
+
+        {/* Color */}
+        <div className="px-4 py-3">
+          <SectionHeader icon={Palette} label="Color" />
+          <ColorPicker
+            color={board.color || null}
+            onChange={async (newColor) => {
+              updateBoard(board.id, { color: newColor })
+              await updateBoardDb(board.id, { color: newColor })
+            }}
+            recentColors={[]}
           />
         </div>
 

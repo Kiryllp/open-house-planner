@@ -5,6 +5,7 @@ export interface Board {
   pin_y: number
   facing_deg: number
   notes: string
+  color: string | null // custom color, null = default gray
   deleted_at: string | null
   created_at: string
 }
@@ -19,6 +20,7 @@ export interface Photo {
   fov_deg: number
   cone_length: number
   notes: string
+  color: string | null // custom color override, null = use type default
   board_id: string | null
   deleted_at: string | null
   created_at: string
@@ -35,6 +37,30 @@ export interface Comment {
   parent_id: string
   author_name: string
   body: string
+  created_at: string
+}
+
+export interface Annotation {
+  id: string
+  type: 'text' | 'rectangle' | 'polygon'
+  // For text: single point. For rect: two points (top-left, bottom-right). For polygon: array of points
+  points: { x: number; y: number }[] // percentage coords (0-100)
+  label: string
+  color: string // hex color
+  fill_opacity: number // 0-1
+  stroke_width: number
+  deleted_at: string | null
+  created_at: string
+  created_by_name: string | null
+}
+
+export interface ActivityEntry {
+  id: string
+  action: string // 'upload_photo' | 'move_pin' | 'assign_board' | 'add_comment' | 'create_board' | 'delete' | 'update' etc
+  actor_name: string
+  target_type: 'photo' | 'board' | 'annotation' | 'comment'
+  target_id: string
+  details: Record<string, any> // flexible JSON for before/after state
   created_at: string
 }
 

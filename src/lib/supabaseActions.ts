@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client'
-import type { Board, Photo } from './types'
+import type { Board, Photo, Annotation, ActivityEntry } from './types'
 
 function getClient() {
   return createClient()
@@ -58,4 +58,24 @@ export async function hardDeleteBoards(ids: string[]) {
   const supabase = getClient()
   const { error } = await supabase.from('boards').delete().in('id', ids)
   if (error) throw error
+}
+
+export async function insertAnnotation(annotation: Omit<Annotation, 'id' | 'created_at'>): Promise<Annotation> {
+  const supabase = getClient()
+  const { data, error } = await supabase.from('annotations').insert(annotation).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function updateAnnotationDb(id: string, updates: Partial<Annotation>) {
+  const supabase = getClient()
+  const { error } = await supabase.from('annotations').update(updates).eq('id', id)
+  if (error) throw error
+}
+
+export async function insertActivity(entry: Omit<ActivityEntry, 'id' | 'created_at'>): Promise<ActivityEntry> {
+  const supabase = getClient()
+  const { data, error } = await supabase.from('activity_log').insert(entry).select().single()
+  if (error) throw error
+  return data
 }

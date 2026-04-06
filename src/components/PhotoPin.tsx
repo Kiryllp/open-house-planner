@@ -7,12 +7,13 @@ interface PhotoPinProps {
   selected: boolean
   dimmed: boolean
   highlighted: boolean
+  coneOpacity: number
   onClick: (e: React.MouseEvent) => void
   onMouseDown: (e: React.MouseEvent) => void
 }
 
-export function PhotoPin({ photo, selected, dimmed, highlighted, onClick, onMouseDown }: PhotoPinProps) {
-  const color = photo.type === 'real' ? '#3b82f6' : '#a855f7'
+export function PhotoPin({ photo, selected, dimmed, highlighted, coneOpacity, onClick, onMouseDown }: PhotoPinProps) {
+  const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
   const dirRad = (photo.direction_deg - 90) * (Math.PI / 180)
   const halfFov = (photo.fov_deg / 2) * (Math.PI / 180)
   const len = photo.cone_length
@@ -45,42 +46,44 @@ export function PhotoPin({ photo, selected, dimmed, highlighted, onClick, onMous
       data-pin-kind="photo"
     >
       {/* Cone SVG */}
-      <svg
-        className="absolute pointer-events-none"
-        style={{
-          left: '50%',
-          top: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: svgSize,
-          height: svgSize,
-          overflow: 'visible',
-        }}
-      >
-        <defs>
-          <radialGradient id={`cone-grad-${photo.id}`} cx="0%" cy="0%" r="100%">
-            <stop offset="0%" stopColor={color} stopOpacity={selected ? 0.35 : 0.25} />
-            <stop offset="100%" stopColor={color} stopOpacity={0.05} />
-          </radialGradient>
-        </defs>
-        <polygon
-          points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
-          fill={`url(#cone-grad-${photo.id})`}
-          stroke={color}
-          strokeOpacity={selected ? 0.7 : 0.4}
-          strokeWidth={selected ? 1.5 : 1}
-        />
-        {/* Center direction line */}
-        {selected && (
-          <line
-            x1={svgCenter} y1={svgCenter}
-            x2={centerX + svgCenter} y2={centerY + svgCenter}
+      {coneOpacity > 0 && (
+        <svg
+          className="absolute pointer-events-none"
+          style={{
+            left: '50%',
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: svgSize,
+            height: svgSize,
+            overflow: 'visible',
+          }}
+        >
+          <defs>
+            <radialGradient id={`cone-grad-${photo.id}`} cx="0%" cy="0%" r="100%">
+              <stop offset="0%" stopColor={color} stopOpacity={(selected ? 0.35 : 0.25) * coneOpacity} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.05 * coneOpacity} />
+            </radialGradient>
+          </defs>
+          <polygon
+            points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
+            fill={`url(#cone-grad-${photo.id})`}
             stroke={color}
-            strokeOpacity={0.5}
-            strokeWidth={1}
-            strokeDasharray="4 3"
+            strokeOpacity={(selected ? 0.7 : 0.4) * coneOpacity}
+            strokeWidth={selected ? 1.5 : 1}
           />
-        )}
-      </svg>
+          {/* Center direction line */}
+          {selected && (
+            <line
+              x1={svgCenter} y1={svgCenter}
+              x2={centerX + svgCenter} y2={centerY + svgCenter}
+              stroke={color}
+              strokeOpacity={0.5 * coneOpacity}
+              strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+          )}
+        </svg>
+      )}
 
       {/* Pin circle */}
       <div

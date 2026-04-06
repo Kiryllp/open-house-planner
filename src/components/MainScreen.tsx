@@ -14,7 +14,10 @@ import {
   hardDeletePhotos,
   hardDeleteBoards,
 } from '@/lib/supabaseActions'
-import type { Photo, Board, Comment } from '@/lib/types'
+import type { Photo, Board, Comment, Annotation, ActivityEntry } from '@/lib/types'
+import { insertAnnotation, updateAnnotationDb, insertActivity } from '@/lib/supabaseActions'
+import { AnnotationLayer } from './AnnotationLayer'
+import { DrawToolbar } from './DrawToolbar'
 import { TopBar } from './TopBar'
 import { SidePanel } from './SidePanel'
 import { PhotoPin } from './PhotoPin'
@@ -26,7 +29,7 @@ import { PhotoCard } from './PhotoCard'
 import { BoardCard } from './BoardCard'
 import { toPng } from 'html-to-image'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
-import { Upload, ImagePlus, Plus, Loader2 } from 'lucide-react'
+import { Upload, ImagePlus, Plus, Loader2, Pencil } from 'lucide-react'
 
 interface MainScreenProps {
   userName: string
@@ -73,6 +76,17 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const [bottomCollapsed, setBottomCollapsed] = useState(false)
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set())
   const [carouselSearch, setCarouselSearch] = useState('')
+
+  // Annotations & activity
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+  const [showAnnotations, setShowAnnotations] = useState(true)
+  const [coneOpacity, setConeOpacity] = useState(0.7)
+  const [drawMode, setDrawMode] = useState<'none' | 'text' | 'rectangle' | 'polygon'>('none')
+  const [drawColor, setDrawColor] = useState('#3b82f6')
+  const [drawFillOpacity, setDrawFillOpacity] = useState(0.2)
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
+  const [drawingPoints, setDrawingPoints] = useState<{ x: number; y: number }[]>([])
 
   // Refs
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -154,6 +168,26 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     setSelectedPhotoIds(new Set())
   }, [])
 
+  // Annotation actions
+  const addAnnotation = useCallback((a: Annotation) => {
+    setAnnotations(prev => {
+      if (prev.some(x => x.id === a.id)) return prev.map(x => x.id === a.id ? a : x)
+      return [...prev, a]
+    })
+  }, [])
+
+  const updateAnnotation = useCallback((id: string, updates: Partial<Annotation>) => {
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a))
+  }, [])
+
+  const removeAnnotation = useCallback((id: string) => {
+    setAnnotations(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  const addActivityEntry = useCallback((entry: ActivityEntry) => {
+    setActivityLog(prev => [entry, ...prev].slice(0, 200))
+  }, [])
+
   // Load data & realtime
   useSupabaseData({
     setPhotos, setBoards, setComments,
@@ -162,6 +196,12 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     removePhoto, removeBoard,
     draggingId,
     onLoaded: () => setLoading(false),
+    setAnnotations,
+    addAnnotation,
+    updateAnnotation,
+    removeAnnotation,
+    setActivityLog,
+    addActivityEntry,
   })
 
   // Coordinate conversion
@@ -199,6 +239,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           sort_order: 0,
           paired_photo_id: null,
           tags: [],
+          color: null,
         })
         uploadedIds.push(photo.id)
         setUploading(prev => prev.map((u) => u.name === files[i].name && !u.done ? { ...u, done: true } : u))
@@ -393,8 +434,78 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     if (target.closest('.handle-element')) return
     // FIX #2: Don't deselect if a handle/drag just finished
     if (handleJustFinishedRef.current) return
+
+    // Drawing mode
+    if (drawMode !== 'none') {
+      const pos = screenToPercent(e.clientX, e.clientY)
+      if (!pos) return
+
+      if (drawMode === 'text') {
+        const label = prompt('Enter label text:')
+        if (label) {
+          insertAnnotation({
+            type: 'text',
+            points: [{ x: pos.x, y: pos.y }],
+            label,
+            color: drawColor,
+            fill_opacity: 0,
+            stroke_width: 2,
+            deleted_at: null,
+            created_by_name: userName,
+          }).catch(() => toast.error('Failed to add annotation'))
+        }
+        return
+      }
+
+      if (drawMode === 'rectangle') {
+        if (drawingPoints.length === 0) {
+          setDrawingPoints([{ x: pos.x, y: pos.y }])
+          return
+        } else {
+          const label = prompt('Label for rectangle (optional):') || ''
+          insertAnnotation({
+            type: 'rectangle',
+            points: [drawingPoints[0], { x: pos.x, y: pos.y }],
+            label,
+            color: drawColor,
+            fill_opacity: drawFillOpacity,
+            stroke_width: 2,
+            deleted_at: null,
+            created_by_name: userName,
+          }).catch(() => toast.error('Failed to add annotation'))
+          setDrawingPoints([])
+          return
+        }
+      }
+
+      if (drawMode === 'polygon') {
+        setDrawingPoints(prev => [...prev, { x: pos.x, y: pos.y }])
+        return
+      }
+
+      return
+    }
+
     select(null, null)
     setOverlap(null)
+    setSelectedAnnotationId(null)
+  }
+
+  function handleCanvasDoubleClick(e: React.MouseEvent) {
+    if (drawMode === 'polygon' && drawingPoints.length >= 3) {
+      const label = prompt('Label for polygon (optional):') || ''
+      insertAnnotation({
+        type: 'polygon',
+        points: drawingPoints,
+        label,
+        color: drawColor,
+        fill_opacity: drawFillOpacity,
+        stroke_width: 2,
+        deleted_at: null,
+        created_by_name: userName,
+      }).catch(() => toast.error('Failed to add annotation'))
+      setDrawingPoints([])
+    }
   }
 
   // Keyboard delete
@@ -465,6 +576,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         facing_deg: 0,
         notes: '',
         deleted_at: null,
+        color: null,
       })
       select(board.id, 'board')
     } catch (err) {
@@ -821,6 +933,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     topCarouselCollapsed: topCollapsed,
     bottomCarouselCollapsed: bottomCollapsed,
     selectedPhotoIds,
+    annotations, activityLog, showAnnotations, coneOpacity,
+    drawMode: drawMode as 'none' | 'text' | 'rectangle' | 'polygon',
     setPhotos, setBoards, setComments,
     select, setDraggingId, toggleFilter,
     updatePhoto, updateBoard,
@@ -832,6 +946,9 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     clearPhotoSelection,
     toggleTopCarousel: () => setTopCollapsed(c => !c),
     toggleBottomCarousel: () => setBottomCollapsed(c => !c),
+    setAnnotations, addAnnotation, updateAnnotation, removeAnnotation,
+    setActivityLog, addActivityEntry,
+    setShowAnnotations, setConeOpacity, setDrawMode,
   }
 
   const floorplanUrl = process.env.NEXT_PUBLIC_FLOORPLAN_URL || ''
@@ -898,6 +1015,22 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
               <button onClick={() => { photos.filter(p => !p.deleted_at).forEach(p => { if (!p.visible) { updatePhoto(p.id, { visible: true }); updatePhotoDb(p.id, { visible: true }) } }) }} className="text-[10px] text-gray-500 hover:text-green-600 whitespace-nowrap">Show All</button>
               <button onClick={() => { photos.filter(p => !p.deleted_at && p.type === 'real').forEach(p => { updatePhoto(p.id, { visible: !p.visible }); updatePhotoDb(p.id, { visible: !p.visible }) }) }} className="text-[10px] text-blue-500 hover:text-blue-700 whitespace-nowrap">Toggle Real</button>
               <button onClick={() => { photos.filter(p => !p.deleted_at && p.type === 'concept').forEach(p => { updatePhoto(p.id, { visible: !p.visible }); updatePhotoDb(p.id, { visible: !p.visible }) }) }} className="text-[10px] text-purple-500 hover:text-purple-700 whitespace-nowrap">Toggle Concept</button>
+              <button onClick={() => setDrawMode(drawMode === 'none' ? 'rectangle' : 'none')}
+                className={`text-[10px] flex items-center gap-0.5 px-1.5 py-0.5 rounded ${drawMode !== 'none' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+                <Pencil className="w-3 h-3" />
+                Draw
+              </button>
+              <button onClick={() => setShowAnnotations(!showAnnotations)}
+                className={`text-[10px] whitespace-nowrap ${showAnnotations ? 'text-gray-700' : 'text-gray-400'}`}>
+                {showAnnotations ? 'Hide Annotations' : 'Show Annotations'}
+              </button>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400">Cones</span>
+                <input type="range" min={0} max={100} value={Math.round(coneOpacity * 100)}
+                  onChange={(e) => setConeOpacity(parseInt(e.target.value) / 100)}
+                  className="w-14 h-1 accent-blue-500"
+                />
+              </div>
             </div>
           }
         >
@@ -939,6 +1072,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   ref={canvasRef}
                   className="relative"
                   onClick={handleCanvasClick}
+                  onDoubleClick={handleCanvasDoubleClick}
                   style={{ pointerEvents: 'auto' }}
                 >
                   {floorplanUrl ? (
@@ -969,6 +1103,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       selected={selectedId === photo.id}
                       dimmed={!!photo.deleted_at}
                       highlighted={highlightedPhotoIds ? highlightedPhotoIds.has(photo.id) : true}
+                      coneOpacity={coneOpacity}
                       onClick={(e) => handlePinClick(photo.id, 'photo', e)}
                       onMouseDown={(e) => handlePinMouseDown(photo.id, 'photo', e)}
                     />
@@ -981,6 +1116,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       selected={selectedId === board.id}
                       dimmed={!!board.deleted_at}
                       highlighted={highlightedBoardId ? highlightedBoardId === board.id : true}
+                      coneOpacity={coneOpacity}
                       photoCount={boardPhotoCounts.get(board.id) || 0}
                       onClick={(e) => handlePinClick(board.id, 'board', e)}
                       onMouseDown={(e) => handlePinMouseDown(board.id, 'board', e)}
@@ -989,9 +1125,27 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
                   {renderConeHandles()}
                   {renderBoardRotateHandle()}
+
+                  {/* Annotation layer */}
+                  <AnnotationLayer
+                    annotations={annotations}
+                    selectedId={selectedAnnotationId}
+                    onSelect={(id) => setSelectedAnnotationId(id)}
+                    visible={showAnnotations}
+                  />
                 </div>
               </TransformComponent>
             </TransformWrapper>
+
+            {/* Draw toolbar */}
+            <DrawToolbar
+              mode={drawMode}
+              color={drawColor}
+              fillOpacity={drawFillOpacity}
+              onSetMode={setDrawMode}
+              onSetColor={setDrawColor}
+              onSetFillOpacity={setDrawFillOpacity}
+            />
 
             {/* Drag-over feedback overlay */}
             {dragOverCount > 0 && (
