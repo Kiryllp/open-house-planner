@@ -73,9 +73,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const isDraggingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Cone handle dragging
-  const [coneHandleDrag, setConeHandleDrag] = useState<'tip' | 'edge' | null>(null)
-
   // Actions
   const select = useCallback((id: string | null, kind: 'photo' | 'board' | null) => {
     setSelectedId(id)
@@ -166,7 +163,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           created_by_name: userName,
         })
         uploadedIds.push(photo.id)
-        setUploading(prev => prev.map((u, idx) => u.name === files[i].name && !u.done ? { ...u, done: true } : u))
+        setUploading(prev => prev.map((u) => u.name === files[i].name && !u.done ? { ...u, done: true } : u))
       } catch (err) {
         toast.error(`Failed to upload ${files[i].name}: ${(err as Error).message}`)
         setUploading(prev => prev.filter(u => u.name !== files[i].name))
@@ -417,8 +414,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
   }
 
-  // Cone handle drag
-  function handleConeHandleMouseDown(handleType: 'tip' | 'edge', e: React.MouseEvent) {
+  // Cone handle drag — single tip handle controls direction + length
+  function handleConeHandleMouseDown(e: React.MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
     if (!selectedId || selectedKind !== 'photo') return
@@ -427,8 +424,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     const photoId = photoSnap.id
     const pinX = photoSnap.pin_x
     const pinY = photoSnap.pin_y
-
-    setConeHandleDrag(handleType)
 
     function onMouseMove(ev: MouseEvent) {
       const pos = screenToPercent(ev.clientX, ev.clientY)
@@ -439,32 +434,21 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       if (angle < 0) angle += 360
       if (ev.shiftKey) angle = Math.round(angle / 5) * 5
 
-      if (handleType === 'tip') {
-        const img = floorplanRef.current
-        if (!img) return
-        const rect = img.getBoundingClientRect()
-        const dxPx = (dx / 100) * rect.width
-        const dyPx = (dy / 100) * rect.height
-        const dist = Math.hypot(dxPx, dyPx)
-        const newLength = Math.max(30, Math.min(300, dist))
-        updatePhoto(photoId, { direction_deg: angle, cone_length: newLength })
-      } else {
-        setPhotos(prev => {
-          const current = prev.find(p => p.id === photoId)
-          if (!current) return prev
-          const diff = Math.abs(angle - current.direction_deg)
-          const fov = Math.min(180, Math.max(10, diff * 2))
-          return prev.map(p => p.id === photoId ? { ...p, fov_deg: fov } : p)
-        })
-      }
+      const img = floorplanRef.current
+      if (!img) return
+      const rect = img.getBoundingClientRect()
+      const dxPx = (dx / 100) * rect.width
+      const dyPx = (dy / 100) * rect.height
+      const dist = Math.hypot(dxPx, dyPx)
+      const newLength = Math.max(30, Math.min(300, dist))
+      updatePhoto(photoId, { direction_deg: angle, cone_length: newLength })
     }
 
     function onMouseUp() {
-      setConeHandleDrag(null)
       setPhotos(prev => {
         const current = prev.find(p => p.id === photoId)
         if (current) {
-          updatePhotoDb(photoId, { direction_deg: current.direction_deg, fov_deg: current.fov_deg, cone_length: current.cone_length })
+          updatePhotoDb(photoId, { direction_deg: current.direction_deg, cone_length: current.cone_length })
         }
         return prev
       })
@@ -476,7 +460,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  // Board rotate handle
+  // Board rotate handle — controls facing_deg (which also rotates the board cone)
   function handleBoardRotateMouseDown(e: React.MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
@@ -652,48 +636,32 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   const isEmpty = !loading && photos.length === 0 && boards.length === 0
 
+  // Simplified cone handles — single tip handle for direction + length
   function renderConeHandles() {
     if (!selectedPhoto) return null
     const dirRad = (selectedPhoto.direction_deg - 90) * (Math.PI / 180)
-    const halfFov = (selectedPhoto.fov_deg / 2) * (Math.PI / 180)
     const len = selectedPhoto.cone_length
     const tipX = Math.cos(dirRad) * len
     const tipY = Math.sin(dirRad) * len
-    const edgeX = Math.cos(dirRad + halfFov) * len * 0.7
-    const edgeY = Math.sin(dirRad + halfFov) * len * 0.7
 
     return (
       <div className="absolute pointer-events-none" style={{ left: `${selectedPhoto.pin_x}%`, top: `${selectedPhoto.pin_y}%`, transform: 'translate(-50%, -50%)', zIndex: 30 }}>
-        {/* Dashed connecting lines */}
+        {/* Dashed connecting line */}
         <svg className="absolute pointer-events-none" style={{ left: 0, top: 0, overflow: 'visible' }}>
           <line x1={0} y1={0} x2={tipX} y2={tipY} stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.5} />
-          <line x1={0} y1={0} x2={edgeX} y2={edgeY} stroke="#a855f7" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.5} />
         </svg>
         {/* Tip handle */}
-        <div className="absolute w-5 h-5 bg-white border-2 border-blue-500 rounded-full cursor-move pointer-events-auto shadow-lg flex items-center justify-center"
+        <div className="handle-element absolute w-5 h-5 bg-white border-2 border-blue-500 rounded-full cursor-move pointer-events-auto shadow-lg flex items-center justify-center"
           style={{ left: tipX - 10, top: tipY - 10 }}
-          onMouseDown={(e) => handleConeHandleMouseDown('tip', e)}
-          title="Drag to rotate & set length"
+          onMouseDown={handleConeHandleMouseDown}
+          title="Drag to rotate &amp; set length"
         >
           <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
         </div>
         {/* Tip label */}
         <div className="absolute text-[9px] font-semibold text-blue-600 bg-white/90 px-1 rounded pointer-events-none"
           style={{ left: tipX - 16, top: tipY + 12 }}>
-          {Math.round(selectedPhoto.direction_deg)}°
-        </div>
-        {/* Edge handle */}
-        <div className="absolute w-4 h-4 bg-white border-2 border-purple-500 rounded-sm cursor-ew-resize pointer-events-auto shadow-lg flex items-center justify-center"
-          style={{ left: edgeX - 8, top: edgeY - 8 }}
-          onMouseDown={(e) => handleConeHandleMouseDown('edge', e)}
-          title="Drag to adjust FOV"
-        >
-          <div className="w-1 h-1 bg-purple-500 rounded-full" />
-        </div>
-        {/* Edge label */}
-        <div className="absolute text-[9px] font-semibold text-purple-600 bg-white/90 px-1 rounded pointer-events-none"
-          style={{ left: edgeX - 14, top: edgeY + 10 }}>
-          FOV {Math.round(selectedPhoto.fov_deg)}°
+          {Math.round(selectedPhoto.direction_deg)}° / {Math.round(selectedPhoto.cone_length)}px
         </div>
       </div>
     )
@@ -711,7 +679,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         <svg className="absolute pointer-events-none" style={{ left: 0, top: 0, overflow: 'visible' }}>
           <line x1={0} y1={0} x2={hx} y2={hy} stroke="#4b5563" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.4} />
         </svg>
-        <div className="absolute w-4 h-4 bg-white border-2 border-gray-600 rounded-full cursor-grab pointer-events-auto shadow-lg flex items-center justify-center"
+        <div className="handle-element absolute w-4 h-4 bg-white border-2 border-gray-600 rounded-full cursor-grab pointer-events-auto shadow-lg flex items-center justify-center"
           style={{ left: hx - 8, top: hy - 8 }}
           onMouseDown={handleBoardRotateMouseDown}
           title="Drag to rotate"
@@ -793,7 +761,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
               initialScale={1}
               centerOnInit
               panning={{ excluded: ['pin-element', 'handle-element'] }}
-              disabled={!!draggingId || !!coneHandleDrag}
             >
               <TransformComponent
                 wrapperStyle={{ width: '100%', height: '100%' }}

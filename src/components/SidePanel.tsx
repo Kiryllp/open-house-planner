@@ -293,7 +293,7 @@ function PhotoPanel({
         {/* Camera / Cone section */}
         <div className="px-4 py-3">
           <SectionHeader icon={Crosshair} label="Camera" />
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="bg-gray-50 rounded-lg px-3 py-2 text-center">
               <p className="text-[10px] text-gray-400 font-medium mb-0.5">Direction</p>
               <p className="text-sm font-semibold text-gray-700">
@@ -311,6 +311,32 @@ function PhotoPanel({
               <p className="text-sm font-semibold text-gray-700">
                 {photo.cone_length != null ? `${Math.round(photo.cone_length)}px` : '--'}
               </p>
+            </div>
+          </div>
+          {/* FOV slider */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-gray-400 font-medium">Field of View</span>
+              <span className="text-[10px] font-semibold text-gray-500">{Math.round(photo.fov_deg)}°</span>
+            </div>
+            <input
+              type="range"
+              min={10}
+              max={180}
+              step={1}
+              value={photo.fov_deg}
+              onChange={(e) => {
+                const fov = Number(e.target.value)
+                updatePhoto(photo.id, { fov_deg: fov })
+              }}
+              onMouseUp={() => {
+                updatePhotoDb(photo.id, { fov_deg: photo.fov_deg })
+              }}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <div className="flex justify-between text-[9px] text-gray-300 mt-0.5">
+              <span>10°</span>
+              <span>180°</span>
             </div>
           </div>
         </div>

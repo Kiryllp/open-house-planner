@@ -84,7 +84,7 @@ export function PhotoPin({ photo, selected, dimmed, highlighted, onClick, onMous
 
       {/* Pin circle */}
       <div
-        className="relative cursor-pointer transition-transform duration-150 group-hover:scale-110"
+        className="pin-element relative cursor-pointer transition-transform duration-150 group-hover:scale-110"
         style={{
           width: 20,
           height: 20,
