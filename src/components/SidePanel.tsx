@@ -297,6 +297,10 @@ function PhotoPanel({
             </span>
             <span>{photo.created_at ? relativeTime(photo.created_at) : ''}</span>
           </div>
+          {/* FIX #4: Show filename */}
+          <div className="mt-1.5 text-[11px] text-gray-400 truncate" title={photo.file_url.split('/').pop()}>
+            📄 {photo.file_url.split('/').pop()}
+          </div>
         </div>
 
         <Divider />

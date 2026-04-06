@@ -280,6 +280,9 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     setTypePickerQueue([])
   }
 
+  // Track if a handle interaction just finished — prevents canvas click from deselecting
+  const handleJustFinishedRef = useRef(false)
+
   // Pin click / selection
   function handlePinClick(id: string, kind: 'photo' | 'board', e: React.MouseEvent) {
     e.stopPropagation()
@@ -368,6 +371,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         else updateBoardDb(id, { pin_x: x, pin_y: y })
       }
 
+      // FIX #1: Always select the item after drag (or click-without-drag)
+      select(id, kind)
+      handleJustFinishedRef.current = true
+      setTimeout(() => { handleJustFinishedRef.current = false }, 50)
+
       if (debounceRef.current) clearTimeout(debounceRef.current)
       dragStartRef.current = null
       lastDragPosRef.current = null
@@ -382,6 +390,9 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   function handleCanvasClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement
     if (target.closest('[data-pin-id]')) return
+    if (target.closest('.handle-element')) return
+    // FIX #2: Don't deselect if a handle/drag just finished
+    if (handleJustFinishedRef.current) return
     select(null, null)
     setOverlap(null)
   }
@@ -491,7 +502,12 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const dxPx = (dx / 100) * rect.width
       const dyPx = (dy / 100) * rect.height
       const dist = Math.hypot(dxPx, dyPx)
-      const newLength = Math.max(30, Math.min(300, dist))
+      // FIX #3: Cap cone length proportional to FOV — narrow FOV = shorter max length
+      // This prevents absurdly long narrow cones
+      const currentPhoto = photos.find(p => p.id === photoId)
+      const fov = currentPhoto?.fov_deg || 70
+      const maxLen = Math.max(80, 120 + (fov - 30) * 2) // wider FOV allows longer cone
+      const newLength = Math.max(30, Math.min(maxLen, dist))
       lastConeRef.current = { direction_deg: angle, cone_length: newLength }
       updatePhoto(photoId, { direction_deg: angle, cone_length: newLength })
     }
@@ -504,6 +520,9 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       }
       lastConeRef.current = null
       setDraggingId(null)
+      // FIX #2: Prevent canvas click from deselecting after handle release
+      handleJustFinishedRef.current = true
+      setTimeout(() => { handleJustFinishedRef.current = false }, 50)
     }
 
     window.addEventListener('mousemove', onMouseMove)
@@ -544,6 +563,9 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       }
       lastBoardAngleRef.current = null
       setDraggingId(null)
+      // FIX #2: Prevent canvas click from deselecting after handle release
+      handleJustFinishedRef.current = true
+      setTimeout(() => { handleJustFinishedRef.current = false }, 50)
     }
 
     window.addEventListener('mousemove', onMouseMove)
@@ -864,12 +886,19 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           onToggle={() => setTopCollapsed(c => !c)}
           position="top"
           actionBar={
-            <input
-              placeholder="Search..."
-              value={carouselSearch}
-              onChange={(e) => setCarouselSearch(e.target.value)}
-              className="text-xs border rounded px-2 py-0.5 w-48"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="Search..."
+                value={carouselSearch}
+                onChange={(e) => setCarouselSearch(e.target.value)}
+                className="text-xs border rounded px-2 py-0.5 w-40 text-gray-700"
+              />
+              {/* FIX #5: Quick visibility toggles */}
+              <button onClick={() => { photos.filter(p => !p.deleted_at).forEach(p => { if (p.visible) { updatePhoto(p.id, { visible: false }); updatePhotoDb(p.id, { visible: false }) } }) }} className="text-[10px] text-gray-500 hover:text-red-600 whitespace-nowrap">Hide All</button>
+              <button onClick={() => { photos.filter(p => !p.deleted_at).forEach(p => { if (!p.visible) { updatePhoto(p.id, { visible: true }); updatePhotoDb(p.id, { visible: true }) } }) }} className="text-[10px] text-gray-500 hover:text-green-600 whitespace-nowrap">Show All</button>
+              <button onClick={() => { photos.filter(p => !p.deleted_at && p.type === 'real').forEach(p => { updatePhoto(p.id, { visible: !p.visible }); updatePhotoDb(p.id, { visible: !p.visible }) }) }} className="text-[10px] text-blue-500 hover:text-blue-700 whitespace-nowrap">Toggle Real</button>
+              <button onClick={() => { photos.filter(p => !p.deleted_at && p.type === 'concept').forEach(p => { updatePhoto(p.id, { visible: !p.visible }); updatePhotoDb(p.id, { visible: !p.visible }) }) }} className="text-[10px] text-purple-500 hover:text-purple-700 whitespace-nowrap">Toggle Concept</button>
+            </div>
           }
         >
           {allPhotosFiltered.map(photo => (
