@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback } from 'react'
+import { useEffect } from 'react'
 import { createClient } from './supabase/client'
 import type { Board, Photo, Comment } from './types'
 
@@ -16,6 +16,7 @@ interface UseSupabaseDataProps {
   removePhoto: (id: string) => void
   removeBoard: (id: string) => void
   draggingId: string | null
+  onLoaded?: () => void
 }
 
 export function useSupabaseData(props: UseSupabaseDataProps) {
@@ -25,6 +26,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     addPhoto, addBoard, addComment,
     removePhoto, removeBoard,
     draggingId,
+    onLoaded,
   } = props
 
   // Load initial data
@@ -41,10 +43,11 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
       if (photosRes.data) setPhotos(photosRes.data)
       if (boardsRes.data) setBoards(boardsRes.data)
       if (commentsRes.data) setComments(commentsRes.data)
+      onLoaded?.()
     }
 
     loadData()
-  }, [setPhotos, setBoards, setComments])
+  }, [setPhotos, setBoards, setComments, onLoaded])
 
   // Realtime subscriptions
   useEffect(() => {
@@ -57,7 +60,6 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
           addPhoto(payload.new as Photo)
         } else if (payload.eventType === 'UPDATE') {
           const updated = payload.new as Photo
-          // Skip updates for items being dragged locally
           if (updated.id === draggingId) return
           updatePhoto(updated.id, updated)
         } else if (payload.eventType === 'DELETE') {

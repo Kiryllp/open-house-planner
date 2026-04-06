@@ -23,6 +23,7 @@ import { OverlapPopover } from './OverlapPopover'
 import { TypePickerModal } from './TypePickerModal'
 import { toPng } from 'html-to-image'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { Upload, ImagePlus, Plus, Loader2 } from 'lucide-react'
 
 interface MainScreenProps {
   userName: string
@@ -43,6 +44,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     showBoards: true,
     showTrash: false,
   })
+  const [loading, setLoading] = useState(true)
 
   // Overlap popover
   const [overlap, setOverlap] = useState<{
@@ -50,11 +52,18 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     position: { x: number; y: number }
   } | null>(null)
 
-  // Type picker for newly dropped photos
-  const [typePicker, setTypePicker] = useState<{
-    photoId: string
-    position: { x: number; y: number }
-  } | null>(null)
+  // Type picker queue (supports multi-file drops)
+  const [typePickerQueue, setTypePickerQueue] = useState<string[]>([])
+  const [typePickerPos, setTypePickerPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+
+  // Drag-over feedback
+  const [dragOverCount, setDragOverCount] = useState(0)
+
+  // Upload progress
+  const [uploading, setUploading] = useState<{ name: string; done: boolean }[]>([])
+
+  // Trash confirm
+  const [showTrashConfirm, setShowTrashConfirm] = useState(false)
 
   // Refs
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -62,6 +71,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const dragStartRef = useRef<{ id: string; kind: 'photo' | 'board'; startX: number; startY: number; pinX: number; pinY: number } | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isDraggingRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Cone handle dragging
   const [coneHandleDrag, setConeHandleDrag] = useState<'tip' | 'edge' | null>(null)
@@ -120,9 +130,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     addPhoto, addBoard, addComment,
     removePhoto, removeBoard,
     draggingId,
+    onLoaded: () => setLoading(false),
   })
 
-  // Coordinate conversion: screen px → percentage of floor plan
+  // Coordinate conversion
   function screenToPercent(clientX: number, clientY: number): { x: number; y: number } | null {
     const img = floorplanRef.current
     if (!img) return null
@@ -132,24 +143,20 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) }
   }
 
-  // Drop handler for image upload
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
-    if (files.length === 0) return
+  // Upload photos (shared by drop and button)
+  async function doUploadPhotos(files: File[], posX: number, posY: number, screenPos: { x: number; y: number }) {
+    const newUploads = files.map(f => ({ name: f.name, done: false }))
+    setUploading(prev => [...prev, ...newUploads])
+    const uploadedIds: string[] = []
 
-    const pos = screenToPercent(e.clientX, e.clientY)
-    if (!pos) return
-
-    files.forEach(async (file, i) => {
+    for (let i = 0; i < files.length; i++) {
       try {
-        const url = await uploadPhoto(file)
+        const url = await uploadPhoto(files[i])
         const photo = await insertPhoto({
           file_url: url,
           type: 'real',
-          pin_x: pos.x + i * 2,
-          pin_y: pos.y + i * 2,
+          pin_x: Math.max(0, Math.min(100, posX + i * 2)),
+          pin_y: Math.max(0, Math.min(100, posY + i * 2)),
           direction_deg: 0,
           fov_deg: 70,
           cone_length: 120,
@@ -158,17 +165,36 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           deleted_at: null,
           created_by_name: userName,
         })
-        if (i === 0) {
-          setTypePicker({
-            photoId: photo.id,
-            position: { x: e.clientX, y: e.clientY },
-          })
-        }
-        toast.success('Photo uploaded')
+        uploadedIds.push(photo.id)
+        setUploading(prev => prev.map((u, idx) => u.name === files[i].name && !u.done ? { ...u, done: true } : u))
       } catch (err) {
-        toast.error(`Upload failed: ${(err as Error).message}`)
+        toast.error(`Failed to upload ${files[i].name}: ${(err as Error).message}`)
+        setUploading(prev => prev.filter(u => u.name !== files[i].name))
       }
-    })
+    }
+
+    // Clear upload indicators after delay
+    setTimeout(() => setUploading(prev => prev.filter(u => !u.done)), 2000)
+
+    // Open type picker queue
+    if (uploadedIds.length > 0) {
+      setTypePickerQueue(uploadedIds)
+      setTypePickerPos(screenPos)
+    }
+  }
+
+  // Drop handler
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverCount(0)
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) return
+
+    const pos = screenToPercent(e.clientX, e.clientY)
+    if (!pos) return
+
+    doUploadPhotos(files, pos.x, pos.y, { x: e.clientX, y: e.clientY })
   }
 
   function handleDragOver(e: React.DragEvent) {
@@ -176,17 +202,52 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     e.dataTransfer.dropEffect = 'copy'
   }
 
-  async function handleTypePick(type: 'real' | 'concept') {
-    if (!typePicker) return
-    updatePhoto(typePicker.photoId, { type })
-    await updatePhotoDb(typePicker.photoId, { type })
-    setTypePicker(null)
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOverCount(c => c + 1)
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOverCount(c => Math.max(0, c - 1))
+  }
+
+  // Upload via button
+  function handleUploadPhotos(files: FileList) {
+    const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+    // Place at center of floor plan
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    doUploadPhotos(imageFiles, 50, 50, { x: vw / 2, y: vh / 2 })
+  }
+
+  // Type picker handlers
+  function handleTypePick(type: 'real' | 'concept') {
+    if (typePickerQueue.length === 0) return
+    const photoId = typePickerQueue[0]
+    updatePhoto(photoId, { type })
+    updatePhotoDb(photoId, { type })
+    setTypePickerQueue(prev => prev.slice(1))
+  }
+
+  function handleTypePickCancel() {
+    if (typePickerQueue.length === 0) return
+    // Default to 'real' and move on
+    setTypePickerQueue(prev => prev.slice(1))
+  }
+
+  function handleApplyAllType(type: 'real' | 'concept') {
+    for (const photoId of typePickerQueue) {
+      updatePhoto(photoId, { type })
+      updatePhotoDb(photoId, { type })
+    }
+    setTypePickerQueue([])
   }
 
   // Pin click / selection
   function handlePinClick(id: string, kind: 'photo' | 'board', e: React.MouseEvent) {
     e.stopPropagation()
-    // If we were dragging, don't select
     if (isDraggingRef.current) return
 
     const clickX = e.clientX
@@ -230,14 +291,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     if (!item) return
 
     isDraggingRef.current = false
-    dragStartRef.current = {
-      id,
-      kind,
-      startX: e.clientX,
-      startY: e.clientY,
-      pinX: item.pin_x,
-      pinY: item.pin_y,
-    }
+    dragStartRef.current = { id, kind, startX: e.clientX, startY: e.clientY, pinX: item.pin_x, pinY: item.pin_y }
 
     function onMouseMove(ev: MouseEvent) {
       if (!dragStartRef.current) return
@@ -256,11 +310,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const clampedX = Math.max(0, Math.min(100, newX))
       const clampedY = Math.max(0, Math.min(100, newY))
 
-      if (kind === 'photo') {
-        updatePhoto(id, { pin_x: clampedX, pin_y: clampedY })
-      } else {
-        updateBoard(id, { pin_x: clampedX, pin_y: clampedY })
-      }
+      if (kind === 'photo') updatePhoto(id, { pin_x: clampedX, pin_y: clampedY })
+      else updateBoard(id, { pin_x: clampedX, pin_y: clampedY })
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => {
@@ -270,18 +321,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
 
     function onMouseUp() {
-      if (isDraggingRef.current) {
-        // Final persist using current state from the closure
-        const img = floorplanRef.current
-        if (img && dragStartRef.current) {
-          // The last mousemove already scheduled a debounced write — flush it
-          if (debounceRef.current) clearTimeout(debounceRef.current)
-          // Read the latest coordinates from DOM position (they were set via updatePhoto/updateBoard)
-        }
+      if (isDraggingRef.current && debounceRef.current) {
+        clearTimeout(debounceRef.current)
       }
       dragStartRef.current = null
       setDraggingId(null)
-      // Reset isDragging after a tick so the click handler can read it
       setTimeout(() => { isDraggingRef.current = false }, 0)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
@@ -320,25 +364,13 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       updatePhoto(capturedId, { deleted_at: now })
       await updatePhotoDb(capturedId, { deleted_at: now })
       toast('Photo deleted', {
-        action: {
-          label: 'Undo',
-          onClick: async () => {
-            updatePhoto(capturedId, { deleted_at: null })
-            await updatePhotoDb(capturedId, { deleted_at: null })
-          },
-        },
+        action: { label: 'Undo', onClick: async () => { updatePhoto(capturedId, { deleted_at: null }); await updatePhotoDb(capturedId, { deleted_at: null }) } },
       })
     } else {
       updateBoard(capturedId, { deleted_at: now })
       await updateBoardDb(capturedId, { deleted_at: now })
       toast('Board deleted', {
-        action: {
-          label: 'Undo',
-          onClick: async () => {
-            updateBoard(capturedId, { deleted_at: null })
-            await updateBoardDb(capturedId, { deleted_at: null })
-          },
-        },
+        action: { label: 'Undo', onClick: async () => { updateBoard(capturedId, { deleted_at: null }); await updateBoardDb(capturedId, { deleted_at: null }) } },
       })
     }
     select(null, null)
@@ -346,31 +378,18 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   async function handleRestore() {
     if (!selectedId || !selectedKind) return
-    if (selectedKind === 'photo') {
-      updatePhoto(selectedId, { deleted_at: null })
-      await updatePhotoDb(selectedId, { deleted_at: null })
-    } else {
-      updateBoard(selectedId, { deleted_at: null })
-      await updateBoardDb(selectedId, { deleted_at: null })
-    }
+    if (selectedKind === 'photo') { updatePhoto(selectedId, { deleted_at: null }); await updatePhotoDb(selectedId, { deleted_at: null }) }
+    else { updateBoard(selectedId, { deleted_at: null }); await updateBoardDb(selectedId, { deleted_at: null }) }
     toast.success('Restored')
   }
 
   async function handleEmptyTrash() {
     const trashPhotos = photos.filter((p) => p.deleted_at)
     const trashBoards = boards.filter((b) => b.deleted_at)
-    if (trashPhotos.length === 0 && trashBoards.length === 0) {
-      toast.info('Trash is empty')
-      return
-    }
-    if (trashPhotos.length > 0) {
-      await hardDeletePhotos(trashPhotos.map((p) => p.id))
-      trashPhotos.forEach((p) => removePhoto(p.id))
-    }
-    if (trashBoards.length > 0) {
-      await hardDeleteBoards(trashBoards.map((b) => b.id))
-      trashBoards.forEach((b) => removeBoard(b.id))
-    }
+    if (trashPhotos.length === 0 && trashBoards.length === 0) { toast.info('Trash is empty'); return }
+    if (trashPhotos.length > 0) { await hardDeletePhotos(trashPhotos.map((p) => p.id)); trashPhotos.forEach((p) => removePhoto(p.id)) }
+    if (trashBoards.length > 0) { await hardDeleteBoards(trashBoards.map((b) => b.id)); trashBoards.forEach((b) => removeBoard(b.id)) }
+    setShowTrashConfirm(false)
     toast.success('Trash emptied')
   }
 
@@ -414,15 +433,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     function onMouseMove(ev: MouseEvent) {
       const pos = screenToPercent(ev.clientX, ev.clientY)
       if (!pos) return
-
       const dx = pos.x - pinX
       const dy = pos.y - pinY
       let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90
       if (angle < 0) angle += 360
-
-      if (ev.shiftKey) {
-        angle = Math.round(angle / 5) * 5
-      }
+      if (ev.shiftKey) angle = Math.round(angle / 5) * 5
 
       if (handleType === 'tip') {
         const img = floorplanRef.current
@@ -434,7 +449,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         const newLength = Math.max(30, Math.min(300, dist))
         updatePhoto(photoId, { direction_deg: angle, cone_length: newLength })
       } else {
-        // Read current direction from state
         setPhotos(prev => {
           const current = prev.find(p => p.id === photoId)
           if (!current) return prev
@@ -447,15 +461,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
     function onMouseUp() {
       setConeHandleDrag(null)
-      // Persist final values
       setPhotos(prev => {
         const current = prev.find(p => p.id === photoId)
         if (current) {
-          updatePhotoDb(photoId, {
-            direction_deg: current.direction_deg,
-            fov_deg: current.fov_deg,
-            cone_length: current.cone_length,
-          })
+          updatePhotoDb(photoId, { direction_deg: current.direction_deg, fov_deg: current.fov_deg, cone_length: current.cone_length })
         }
         return prev
       })
@@ -502,7 +511,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  // Export JSON
+  // Exports
   function handleExportJSON() {
     const data = JSON.stringify({ boards, photos, comments }, null, 2)
     const blob = new Blob([data], { type: 'application/json' })
@@ -515,7 +524,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     toast.success('JSON exported')
   }
 
-  // Export Map PDF
   async function handleExportMapPDF() {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -527,7 +535,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const { width, height } = pngImage.scale(1)
       const page = pdfDoc.addPage([width, height])
       page.drawImage(pngImage, { x: 0, y: 0, width, height })
-
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
       const legendY = 20
       page.drawCircle({ x: 20, y: legendY, size: 6, color: rgb(0.231, 0.510, 0.965) })
@@ -536,7 +543,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       page.drawText('Concept', { x: 90, y: legendY - 4, size: 10, font, color: rgb(0, 0, 0) })
       page.drawRectangle({ x: 150, y: legendY - 5, width: 16, height: 10, color: rgb(0.294, 0.333, 0.388) })
       page.drawText('Board', { x: 170, y: legendY - 4, size: 10, font, color: rgb(0, 0, 0) })
-
       const pdfBytes = await pdfDoc.save()
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
@@ -551,84 +557,50 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
   }
 
-  // Export Board Packets PDF
   async function handleExportBoardPDF() {
     toast.info('Generating board packets...')
     try {
       const pdfDoc = await PDFDocument.create()
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
       const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-
       const activeBoards = boards.filter((b) => !b.deleted_at)
       for (const board of activeBoards) {
         const page = pdfDoc.addPage([792, 612])
         page.drawText(board.label, { x: 40, y: 572, size: 20, font: fontBold, color: rgb(0, 0, 0) })
-        if (board.notes) {
-          page.drawText(board.notes.slice(0, 100), { x: 40, y: 550, size: 10, font, color: rgb(0.4, 0.4, 0.4) })
-        }
-
+        if (board.notes) page.drawText(board.notes.slice(0, 100), { x: 40, y: 550, size: 10, font, color: rgb(0.4, 0.4, 0.4) })
         const boardPhotos = photos.filter((p) => p.board_id === board.id && !p.deleted_at)
-        let xPos = 40
-        let yPos = 500
+        let xPos = 40, yPos = 500
         for (const photo of boardPhotos) {
           try {
             const imgRes = await fetch(photo.file_url)
             const imgBytes = await imgRes.arrayBuffer()
-            let img
-            const lowerUrl = photo.file_url.toLowerCase()
-            if (lowerUrl.endsWith('.png')) {
-              img = await pdfDoc.embedPng(imgBytes)
-            } else {
-              img = await pdfDoc.embedJpg(imgBytes)
-            }
+            const img = photo.file_url.toLowerCase().endsWith('.png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes)
             const scale = Math.min(150 / img.width, 120 / img.height)
-            const w = img.width * scale
-            const h = img.height * scale
-            page.drawImage(img, { x: xPos, y: yPos - h, width: w, height: h })
-            if (photo.notes) {
-              page.drawText(photo.notes.slice(0, 40), { x: xPos, y: yPos - h - 14, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
-            }
+            page.drawImage(img, { x: xPos, y: yPos - img.height * scale, width: img.width * scale, height: img.height * scale })
+            if (photo.notes) page.drawText(photo.notes.slice(0, 40), { x: xPos, y: yPos - img.height * scale - 14, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
             xPos += 170
-            if (xPos > 650) {
-              xPos = 40
-              yPos -= 160
-            }
-          } catch { /* skip unloadable images */ }
+            if (xPos > 650) { xPos = 40; yPos -= 160 }
+          } catch { /* skip */ }
         }
       }
-
       const unassigned = photos.filter((p) => p.type === 'concept' && !p.board_id && !p.deleted_at)
       if (unassigned.length > 0) {
         const page = pdfDoc.addPage([792, 612])
         page.drawText('Unassigned Concepts', { x: 40, y: 572, size: 20, font: fontBold, color: rgb(0, 0, 0) })
-        let xPos = 40
-        let yPos = 500
+        let xPos = 40, yPos = 500
         for (const photo of unassigned) {
           try {
             const imgRes = await fetch(photo.file_url)
             const imgBytes = await imgRes.arrayBuffer()
-            let img
-            if (photo.file_url.toLowerCase().endsWith('.png')) {
-              img = await pdfDoc.embedPng(imgBytes)
-            } else {
-              img = await pdfDoc.embedJpg(imgBytes)
-            }
+            const img = photo.file_url.toLowerCase().endsWith('.png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes)
             const scale = Math.min(150 / img.width, 120 / img.height)
-            const w = img.width * scale
-            const h = img.height * scale
-            page.drawImage(img, { x: xPos, y: yPos - h, width: w, height: h })
-            if (photo.notes) {
-              page.drawText(photo.notes.slice(0, 40), { x: xPos, y: yPos - h - 14, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
-            }
+            page.drawImage(img, { x: xPos, y: yPos - img.height * scale, width: img.width * scale, height: img.height * scale })
+            if (photo.notes) page.drawText(photo.notes.slice(0, 40), { x: xPos, y: yPos - img.height * scale - 14, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
             xPos += 170
-            if (xPos > 650) {
-              xPos = 40
-              yPos -= 160
-            }
+            if (xPos > 650) { xPos = 40; yPos -= 160 }
           } catch { /* skip */ }
         }
       }
-
       const pdfBytes = await pdfDoc.save()
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
@@ -643,7 +615,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
   }
 
-  // Filter visible items
+  // Computed
   const filteredPhotos = photos.filter((p) => {
     if (p.deleted_at) return filters.showTrash
     if (p.type === 'real' && !filters.showReal) return false
@@ -659,39 +631,70 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const selectedPhoto = selectedKind === 'photo' ? photos.find((p) => p.id === selectedId) : null
   const selectedBoard = selectedKind === 'board' ? boards.find((b) => b.id === selectedId) : null
 
+  // Determine which photos are highlighted (connected to selected board)
+  const highlightedPhotoIds = selectedBoard ? new Set(photos.filter(p => p.board_id === selectedBoard.id && !p.deleted_at).map(p => p.id)) : null
+  // Determine which board is highlighted (connected to selected photo)
+  const highlightedBoardId = selectedPhoto?.board_id || null
+
+  // Photo counts per board
+  const boardPhotoCounts = new Map<string, number>()
+  photos.filter(p => !p.deleted_at && p.board_id).forEach(p => {
+    boardPhotoCounts.set(p.board_id!, (boardPhotoCounts.get(p.board_id!) || 0) + 1)
+  })
+
+  // Filter counts for TopBar
+  const photoCounts = {
+    real: photos.filter(p => p.type === 'real' && !p.deleted_at).length,
+    concept: photos.filter(p => p.type === 'concept' && !p.deleted_at).length,
+  }
+  const boardCount = boards.filter(b => !b.deleted_at).length
+  const trashCount = photos.filter(p => p.deleted_at).length + boards.filter(b => b.deleted_at).length
+
+  const isEmpty = !loading && photos.length === 0 && boards.length === 0
+
   function renderConeHandles() {
     if (!selectedPhoto) return null
     const dirRad = (selectedPhoto.direction_deg - 90) * (Math.PI / 180)
     const halfFov = (selectedPhoto.fov_deg / 2) * (Math.PI / 180)
     const len = selectedPhoto.cone_length
-
     const tipX = Math.cos(dirRad) * len
     const tipY = Math.sin(dirRad) * len
     const edgeX = Math.cos(dirRad + halfFov) * len * 0.7
     const edgeY = Math.sin(dirRad + halfFov) * len * 0.7
 
     return (
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          left: `${selectedPhoto.pin_x}%`,
-          top: `${selectedPhoto.pin_y}%`,
-          transform: 'translate(-50%, -50%)',
-          zIndex: 30,
-        }}
-      >
-        <div
-          className="absolute w-4 h-4 bg-white border-2 border-blue-500 rounded-full cursor-move pointer-events-auto shadow-md"
-          style={{ left: tipX - 8, top: tipY - 8 }}
+      <div className="absolute pointer-events-none" style={{ left: `${selectedPhoto.pin_x}%`, top: `${selectedPhoto.pin_y}%`, transform: 'translate(-50%, -50%)', zIndex: 30 }}>
+        {/* Dashed connecting lines */}
+        <svg className="absolute pointer-events-none" style={{ left: 0, top: 0, overflow: 'visible' }}>
+          <line x1={0} y1={0} x2={tipX} y2={tipY} stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.5} />
+          <line x1={0} y1={0} x2={edgeX} y2={edgeY} stroke="#a855f7" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.5} />
+        </svg>
+        {/* Tip handle */}
+        <div className="absolute w-5 h-5 bg-white border-2 border-blue-500 rounded-full cursor-move pointer-events-auto shadow-lg flex items-center justify-center"
+          style={{ left: tipX - 10, top: tipY - 10 }}
           onMouseDown={(e) => handleConeHandleMouseDown('tip', e)}
           title="Drag to rotate & set length"
-        />
-        <div
-          className="absolute w-3 h-3 bg-white border-2 border-purple-500 rounded-sm cursor-ew-resize pointer-events-auto shadow-md"
-          style={{ left: edgeX - 6, top: edgeY - 6 }}
+        >
+          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+        </div>
+        {/* Tip label */}
+        <div className="absolute text-[9px] font-semibold text-blue-600 bg-white/90 px-1 rounded pointer-events-none"
+          style={{ left: tipX - 16, top: tipY + 12 }}>
+          {Math.round(selectedPhoto.direction_deg)}°
+        </div>
+        {/* Edge handle */}
+        <div className="absolute w-4 h-4 bg-white border-2 border-purple-500 rounded-sm cursor-ew-resize pointer-events-auto shadow-lg flex items-center justify-center"
+          style={{ left: edgeX - 8, top: edgeY - 8 }}
           onMouseDown={(e) => handleConeHandleMouseDown('edge', e)}
           title="Drag to adjust FOV"
-        />
+        >
+          <div className="w-1 h-1 bg-purple-500 rounded-full" />
+        </div>
+        {/* Edge label */}
+        <div className="absolute text-[9px] font-semibold text-purple-600 bg-white/90 px-1 rounded pointer-events-none"
+          style={{ left: edgeX - 14, top: edgeY + 10 }}>
+          FOV {Math.round(selectedPhoto.fov_deg)}°
+        </div>
       </div>
     )
   }
@@ -699,27 +702,50 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   function renderBoardRotateHandle() {
     if (!selectedBoard) return null
     const rad = selectedBoard.facing_deg * (Math.PI / 180)
-    const handleDist = 30
+    const handleDist = 35
     const hx = Math.cos(rad) * handleDist
     const hy = Math.sin(rad) * handleDist
 
     return (
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          left: `${selectedBoard.pin_x}%`,
-          top: `${selectedBoard.pin_y}%`,
-          transform: 'translate(-50%, -50%)',
-          zIndex: 30,
-        }}
-      >
-        <div
-          className="absolute w-3.5 h-3.5 bg-white border-2 border-gray-600 rounded-full cursor-grab pointer-events-auto shadow-md"
-          style={{ left: hx - 7, top: hy - 7 }}
+      <div className="absolute pointer-events-none" style={{ left: `${selectedBoard.pin_x}%`, top: `${selectedBoard.pin_y}%`, transform: 'translate(-50%, -50%)', zIndex: 30 }}>
+        <svg className="absolute pointer-events-none" style={{ left: 0, top: 0, overflow: 'visible' }}>
+          <line x1={0} y1={0} x2={hx} y2={hy} stroke="#4b5563" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.4} />
+        </svg>
+        <div className="absolute w-4 h-4 bg-white border-2 border-gray-600 rounded-full cursor-grab pointer-events-auto shadow-lg flex items-center justify-center"
+          style={{ left: hx - 8, top: hy - 8 }}
           onMouseDown={handleBoardRotateMouseDown}
           title="Drag to rotate"
-        />
+        >
+          <div className="w-1 h-1 bg-gray-600 rounded-full" />
+        </div>
+        <div className="absolute text-[9px] font-semibold text-gray-600 bg-white/90 px-1 rounded pointer-events-none"
+          style={{ left: hx - 10, top: hy + 10 }}>
+          {Math.round(selectedBoard.facing_deg)}°
+        </div>
       </div>
+    )
+  }
+
+  // Board-photo connection lines
+  function renderConnectionLines() {
+    if (!selectedBoard) return null
+    const assignedPhotos = photos.filter(p => p.board_id === selectedBoard.id && !p.deleted_at)
+    if (assignedPhotos.length === 0) return null
+
+    return (
+      <svg className="absolute inset-0 pointer-events-none" style={{ width: '100%', height: '100%', zIndex: 5 }}>
+        {assignedPhotos.map(p => (
+          <line
+            key={p.id}
+            x1={`${selectedBoard.pin_x}%`} y1={`${selectedBoard.pin_y}%`}
+            x2={`${p.pin_x}%`} y2={`${p.pin_y}%`}
+            stroke="#6b7280"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+            strokeOpacity={0.5}
+          />
+        ))}
+      </svg>
     )
   }
 
@@ -742,13 +768,25 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           userName={userName}
           onChangeName={onChangeName}
           onAddBoard={handleAddBoard}
+          onUploadPhotos={handleUploadPhotos}
           onExportJSON={handleExportJSON}
           onExportMapPDF={handleExportMapPDF}
           onExportBoardPDF={handleExportBoardPDF}
-          onEmptyTrash={handleEmptyTrash}
+          onEmptyTrash={() => setShowTrashConfirm(true)}
+          photoCounts={photoCounts}
+          boardCount={boardCount}
+          trashCount={trashCount}
         />
         <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 overflow-hidden bg-gray-200 relative">
+          {/* Canvas area */}
+          <div
+            className="flex-1 overflow-hidden relative"
+            style={{ background: 'radial-gradient(circle, #e5e7eb 1px, #f3f4f6 1px)', backgroundSize: '20px 20px' }}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+          >
             <TransformWrapper
               minScale={0.3}
               maxScale={5}
@@ -765,8 +803,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   ref={canvasRef}
                   className="relative"
                   onClick={handleCanvasClick}
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
                   style={{ pointerEvents: 'auto' }}
                 >
                   {floorplanUrl ? (
@@ -774,18 +810,21 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       ref={floorplanRef}
                       src={floorplanUrl}
                       alt="Floor plan"
-                      className="max-w-none select-none"
+                      className="max-w-none select-none shadow-lg rounded-sm"
                       draggable={false}
                       style={{ display: 'block' }}
                     />
                   ) : (
                     <div
                       ref={floorplanRef as React.Ref<HTMLDivElement>}
-                      className="w-[800px] h-[600px] bg-white border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400"
+                      className="w-[800px] h-[600px] bg-white border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 rounded-lg"
                     >
                       No floor plan configured — set NEXT_PUBLIC_FLOORPLAN_URL
                     </div>
                   )}
+
+                  {/* Connection lines from selected board to its photos */}
+                  {renderConnectionLines()}
 
                   {filteredPhotos.map((photo) => (
                     <PhotoPin
@@ -793,6 +832,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       photo={photo}
                       selected={selectedId === photo.id}
                       dimmed={!!photo.deleted_at}
+                      highlighted={highlightedPhotoIds ? highlightedPhotoIds.has(photo.id) : true}
                       onClick={(e) => handlePinClick(photo.id, 'photo', e)}
                       onMouseDown={(e) => handlePinMouseDown(photo.id, 'photo', e)}
                     />
@@ -804,6 +844,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       board={board}
                       selected={selectedId === board.id}
                       dimmed={!!board.deleted_at}
+                      highlighted={highlightedBoardId ? highlightedBoardId === board.id : true}
+                      photoCount={boardPhotoCounts.get(board.id) || 0}
                       onClick={(e) => handlePinClick(board.id, 'board', e)}
                       onMouseDown={(e) => handlePinMouseDown(board.id, 'board', e)}
                     />
@@ -811,17 +853,81 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
                   {renderConeHandles()}
                   {renderBoardRotateHandle()}
-
-                  {typePicker && (
-                    <TypePickerModal
-                      position={typePicker.position}
-                      onPick={handleTypePick}
-                    />
-                  )}
                 </div>
               </TransformComponent>
             </TransformWrapper>
 
+            {/* Drag-over feedback overlay */}
+            {dragOverCount > 0 && (
+              <div className="absolute inset-0 bg-blue-500/10 border-4 border-dashed border-blue-400 z-30 flex items-center justify-center pointer-events-none transition-all">
+                <div className="bg-white rounded-xl shadow-xl px-8 py-6 flex flex-col items-center gap-2">
+                  <Upload className="w-10 h-10 text-blue-500" />
+                  <span className="text-lg font-semibold text-gray-700">Drop photos here</span>
+                  <span className="text-sm text-gray-400">They'll be placed on the floor plan</span>
+                </div>
+              </div>
+            )}
+
+            {/* Loading spinner */}
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/50 z-20">
+                <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+              </div>
+            )}
+
+            {/* Empty state */}
+            {isEmpty && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                <div className="bg-white rounded-xl shadow-lg px-10 py-8 flex flex-col items-center gap-4 pointer-events-auto max-w-sm text-center">
+                  <ImagePlus className="w-12 h-12 text-gray-300" />
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-700 mb-1">Get started</h2>
+                    <p className="text-sm text-gray-400">Drop photos on the floor plan or use the upload button above</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      <ImagePlus className="w-4 h-4" />
+                      Upload Photos
+                    </button>
+                    <button
+                      onClick={handleAddBoard}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Board
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Hidden file input for empty state upload button */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => { if (e.target.files) handleUploadPhotos(e.target.files); e.target.value = '' }}
+            />
+
+            {/* Upload progress */}
+            {uploading.length > 0 && (
+              <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-40 min-w-[200px]">
+                <div className="text-xs font-semibold text-gray-600 mb-2">Uploading...</div>
+                {uploading.map((u, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-gray-500 py-0.5">
+                    {u.done ? <span className="text-green-500">&#10003;</span> : <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
+                    <span className="truncate max-w-[150px]">{u.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Overlap popover */}
             {overlap && (
               <OverlapPopover
                 items={overlap.items}
@@ -832,10 +938,39 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
             )}
           </div>
 
+          {/* Side panel */}
           {selectedId && (
             <SidePanel onDelete={handleSoftDelete} onRestore={handleRestore} />
           )}
         </div>
+
+        {/* Type picker modal */}
+        {typePickerQueue.length > 0 && (
+          <TypePickerModal
+            position={typePickerPos}
+            onPick={handleTypePick}
+            onCancel={handleTypePickCancel}
+            remaining={typePickerQueue.length - 1}
+            onApplyAll={typePickerQueue.length > 1 ? handleApplyAllType : undefined}
+          />
+        )}
+
+        {/* Trash confirm dialog */}
+        {showTrashConfirm && (
+          <>
+            <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setShowTrashConfirm(false)} />
+            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl p-6 z-50 max-w-sm w-full">
+              <h3 className="font-semibold text-gray-900 mb-2">Empty Trash?</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                This will permanently delete {trashCount} item{trashCount !== 1 ? 's' : ''}. This cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowTrashConfirm(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+                <button onClick={handleEmptyTrash} className="px-4 py-2 text-sm bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors">Delete permanently</button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </AppContext>
   )
