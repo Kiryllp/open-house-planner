@@ -17,6 +17,9 @@ export interface AppState {
     showTrash: boolean
   }
   userName: string
+  topCarouselCollapsed: boolean
+  bottomCarouselCollapsed: boolean
+  selectedPhotoIds: Set<string>
 }
 
 export interface AppActions {
@@ -33,6 +36,12 @@ export interface AppActions {
   addComment: (comment: Comment) => void
   removePhoto: (id: string) => void
   removeBoard: (id: string) => void
+  togglePhotoVisibility: (id: string) => void
+  setPhotoTags: (id: string, tags: string[]) => void
+  togglePhotoSelection: (id: string) => void
+  clearPhotoSelection: () => void
+  toggleTopCarousel: () => void
+  toggleBottomCarousel: () => void
 }
 
 export const AppContext = createContext<(AppState & AppActions) | null>(null)

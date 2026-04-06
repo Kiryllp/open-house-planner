@@ -23,6 +23,10 @@ export interface Photo {
   deleted_at: string | null
   created_at: string
   created_by_name: string | null
+  visible: boolean
+  sort_order: number
+  paired_photo_id: string | null
+  tags: string[]
 }
 
 export interface Comment {

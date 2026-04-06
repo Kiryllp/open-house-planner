@@ -6,7 +6,9 @@ import { updatePhotoDb, updateBoardDb, insertComment } from '@/lib/supabaseActio
 import {
   X, Camera, Lightbulb, Trash2, RotateCcw, Send,
   Info, Compass, StickyNote, LayoutGrid, MessageSquare, Eye, Crosshair,
+  Tag, Link2,
 } from 'lucide-react'
+import { TagPicker } from './TagPicker'
 import type { Photo, Board, Comment } from '@/lib/types'
 
 /* ------------------------------------------------------------------ */
@@ -196,15 +198,53 @@ function PhotoPanel({
   onRestore: () => void
   updatePhoto: (id: string, updates: Partial<Photo>) => void
 }) {
+  const { photos: allPhotos } = useApp()
   const [notes, setNotes] = useState(photo.notes)
   const notesRef = useRef(photo.id)
+  const [showPairPicker, setShowPairPicker] = useState(false)
 
   useEffect(() => {
     if (notesRef.current !== photo.id) {
       setNotes(photo.notes)
+      setShowPairPicker(false)
       notesRef.current = photo.id
     }
   }, [photo.id, photo.notes])
+
+  // Find this photo's pair
+  const pairedPhoto = photo.paired_photo_id
+    ? allPhotos.find(p => p.id === photo.paired_photo_id)
+    : allPhotos.find(p => p.paired_photo_id === photo.id)
+
+  // Photos available for pairing: different type, not deleted, not already paired
+  const availableForPairing = allPhotos.filter(p =>
+    !p.deleted_at &&
+    p.type !== photo.type &&
+    !p.paired_photo_id &&
+    p.id !== photo.id &&
+    !allPhotos.some(other => other.paired_photo_id === p.id)
+  )
+
+  async function handlePair(targetId: string) {
+    const conceptId = photo.type === 'concept' ? photo.id : targetId
+    const realId = photo.type === 'real' ? photo.id : targetId
+    updatePhoto(conceptId, { paired_photo_id: realId })
+    await updatePhotoDb(conceptId, { paired_photo_id: realId })
+    setShowPairPicker(false)
+  }
+
+  async function handleUnpair() {
+    if (photo.paired_photo_id) {
+      updatePhoto(photo.id, { paired_photo_id: null })
+      await updatePhotoDb(photo.id, { paired_photo_id: null })
+    } else {
+      const other = allPhotos.find(p => p.paired_photo_id === photo.id)
+      if (other) {
+        updatePhoto(other.id, { paired_photo_id: null })
+        await updatePhotoDb(other.id, { paired_photo_id: null })
+      }
+    }
+  }
 
   async function handleNotesBlur() {
     if (notes !== photo.notes) {
@@ -384,6 +424,53 @@ function PhotoPanel({
           </select>
         </div>
 
+        {/* Tags */}
+        <Divider />
+        <div className="px-4 py-3">
+          <SectionHeader icon={Tag} label="Tags" />
+          <TagPicker
+            tags={photo.tags || []}
+            onChange={async (newTags) => {
+              updatePhoto(photo.id, { tags: newTags })
+              await updatePhotoDb(photo.id, { tags: newTags })
+            }}
+          />
+        </div>
+
+        {/* Pairing */}
+        <Divider />
+        <div className="px-4 py-3">
+          <SectionHeader icon={Link2} label="Photo Pairing" />
+          {pairedPhoto ? (
+            <div className="flex items-center gap-2 mb-2">
+              <img src={pairedPhoto.file_url} className="w-10 h-10 rounded object-cover border" />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs text-gray-600">Paired with {pairedPhoto.type}</span>
+              </div>
+              <button onClick={handleUnpair} className="text-xs text-red-500 hover:text-red-700">Unlink</button>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 mb-2">No pair linked</p>
+          )}
+          <button onClick={() => setShowPairPicker(v => !v)} className="text-xs text-blue-600 hover:text-blue-800">
+            {pairedPhoto ? 'Change pair' : 'Link to pair'}
+          </button>
+          {showPairPicker && (
+            <div className="mt-2 max-h-32 overflow-y-auto border rounded p-1 space-y-1">
+              {availableForPairing.length === 0 ? (
+                <p className="text-xs text-gray-400 px-1 py-1">No photos available for pairing</p>
+              ) : (
+                availableForPairing.map(p => (
+                  <button key={p.id} onClick={() => handlePair(p.id)} className="flex items-center gap-2 w-full hover:bg-gray-50 rounded p-1">
+                    <img src={p.file_url} className="w-8 h-8 rounded object-cover" />
+                    <span className="text-xs text-gray-600">{p.type}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
         <Divider />
 
         {/* Comments */}
@@ -408,6 +495,47 @@ function PhotoPanel({
         )}
       </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  BoardPhotoCard                                                    */
+/* ------------------------------------------------------------------ */
+
+function BoardPhotoCard({ photo, onClick }: { photo: Photo; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="group relative text-left">
+      <img
+        src={photo.file_url}
+        alt=""
+        className="w-full aspect-[4/3] object-cover rounded-lg border border-gray-200 group-hover:ring-2 group-hover:ring-blue-400 transition-shadow"
+      />
+      {/* Type indicator dot */}
+      <span
+        className={`absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full border border-white shadow-sm ${
+          photo.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'
+        }`}
+      />
+      {/* Notes excerpt */}
+      {photo.notes && (
+        <p className="text-[10px] text-gray-500 mt-1 truncate leading-tight">
+          {photo.notes.slice(0, 30)}{photo.notes.length > 30 ? '...' : ''}
+        </p>
+      )}
+      {/* Tag pills */}
+      {photo.tags && photo.tags.length > 0 && (
+        <div className="flex flex-wrap gap-0.5 mt-1">
+          {photo.tags.slice(0, 3).map((tag) => (
+            <span key={tag} className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full leading-none">
+              {tag}
+            </span>
+          ))}
+          {photo.tags.length > 3 && (
+            <span className="text-[9px] text-gray-400">+{photo.tags.length - 3}</span>
+          )}
+        </div>
+      )}
+    </button>
   )
 }
 
@@ -438,6 +566,7 @@ function BoardPanel({
 }) {
   const [label, setLabel] = useState(board.label)
   const [notes, setNotes] = useState(board.notes)
+  const [showPairs, setShowPairs] = useState(false)
   const boardIdRef = useRef(board.id)
 
   useEffect(() => {
@@ -524,30 +653,66 @@ function BoardPanel({
 
         {/* Assigned photos */}
         <div className="px-4 py-3">
-          <SectionHeader icon={Eye} label={`Photos (${photos.length})`} />
+          <div className="flex items-center justify-between mb-2">
+            <SectionHeader icon={Eye} label={`Photos (${photos.length})`} />
+            {photos.length > 0 && (
+              <button
+                onClick={() => setShowPairs(v => !v)}
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors ${
+                  showPairs
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                {showPairs ? 'Pairs On' : 'Show Pairs'}
+              </button>
+            )}
+          </div>
           {photos.length === 0 ? (
             <div className="text-center py-4">
               <Camera className="w-5 h-5 text-gray-300 mx-auto mb-1" />
               <p className="text-xs text-gray-400">No photos assigned yet</p>
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {photos.map((p) => (
-                <button key={p.id} onClick={() => onSelectPhoto(p.id)} className="group relative">
-                  <img
-                    src={p.file_url}
-                    alt=""
-                    className="w-full aspect-square object-cover rounded-lg border border-gray-200 group-hover:ring-2 group-hover:ring-blue-400 transition-shadow"
-                  />
-                  {/* Type indicator dot */}
-                  <span
-                    className={`absolute top-1 right-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm ${
-                      p.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'
-                    }`}
-                  />
-                </button>
-              ))}
-            </div>
+            (() => {
+              const sorted = [...photos].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+              if (showPairs) {
+                // Group paired photos together
+                const visited = new Set<string>()
+                const groups: Photo[][] = []
+                for (const p of sorted) {
+                  if (visited.has(p.id)) continue
+                  visited.add(p.id)
+                  const pair = p.paired_photo_id
+                    ? sorted.find(o => o.id === p.paired_photo_id)
+                    : sorted.find(o => o.paired_photo_id === p.id)
+                  if (pair && !visited.has(pair.id)) {
+                    visited.add(pair.id)
+                    groups.push([p, pair])
+                  } else {
+                    groups.push([p])
+                  }
+                }
+                return (
+                  <div className="space-y-2">
+                    {groups.map((group) => (
+                      <div key={group[0].id} className={`grid gap-2 ${group.length === 2 ? 'grid-cols-2' : 'grid-cols-2'}`}>
+                        {group.map((p) => (
+                          <BoardPhotoCard key={p.id} photo={p} onClick={() => onSelectPhoto(p.id)} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )
+              }
+              return (
+                <div className="grid grid-cols-2 gap-2">
+                  {sorted.map((p) => (
+                    <BoardPhotoCard key={p.id} photo={p} onClick={() => onSelectPhoto(p.id)} />
+                  ))}
+                </div>
+              )
+            })()
           )}
         </div>
 

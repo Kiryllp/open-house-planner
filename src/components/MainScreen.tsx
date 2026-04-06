@@ -21,6 +21,9 @@ import { PhotoPin } from './PhotoPin'
 import { BoardPin } from './BoardPin'
 import { OverlapPopover } from './OverlapPopover'
 import { TypePickerModal } from './TypePickerModal'
+import { CarouselPanel } from './CarouselPanel'
+import { PhotoCard } from './PhotoCard'
+import { BoardCard } from './BoardCard'
 import { toPng } from 'html-to-image'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { Upload, ImagePlus, Plus, Loader2 } from 'lucide-react'
@@ -64,6 +67,12 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   // Trash confirm
   const [showTrashConfirm, setShowTrashConfirm] = useState(false)
+
+  // Carousel state
+  const [topCollapsed, setTopCollapsed] = useState(false)
+  const [bottomCollapsed, setBottomCollapsed] = useState(false)
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set())
+  const [carouselSearch, setCarouselSearch] = useState('')
 
   // Refs
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -120,6 +129,31 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     setBoards((prev) => prev.filter((b) => b.id !== id))
   }, [])
 
+  // Carousel action callbacks
+  const togglePhotoVisibility = useCallback((id: string) => {
+    setPhotos(prev => prev.map(p => p.id === id ? { ...p, visible: !p.visible } : p))
+    const photo = photos.find(p => p.id === id)
+    if (photo) updatePhotoDb(id, { visible: !photo.visible })
+  }, [photos])
+
+  const setPhotoTags = useCallback((id: string, tags: string[]) => {
+    setPhotos(prev => prev.map(p => p.id === id ? { ...p, tags } : p))
+    updatePhotoDb(id, { tags })
+  }, [])
+
+  const togglePhotoSelection = useCallback((id: string) => {
+    setSelectedPhotoIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const clearPhotoSelection = useCallback(() => {
+    setSelectedPhotoIds(new Set())
+  }, [])
+
   // Load data & realtime
   useSupabaseData({
     setPhotos, setBoards, setComments,
@@ -161,6 +195,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           board_id: null,
           deleted_at: null,
           created_by_name: userName,
+          visible: true,
+          sort_order: 0,
+          paired_photo_id: null,
+          tags: [],
         })
         uploadedIds.push(photo.id)
         setUploading(prev => prev.map((u) => u.name === files[i].name && !u.done ? { ...u, done: true } : u))
@@ -423,7 +461,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
   }
 
-  // Cone handle drag — single tip handle controls direction + length
+  // Cone handle drag -- single tip handle controls direction + length
   const lastConeRef = useRef<{ direction_deg: number; cone_length: number } | null>(null)
 
   function handleConeHandleMouseDown(e: React.MouseEvent) {
@@ -472,7 +510,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     window.addEventListener('mouseup', onMouseUp)
   }
 
-  // Board rotate handle — controls facing_deg (which also rotates the board cone)
+  // Board rotate handle -- controls facing_deg (which also rotates the board cone)
   const lastBoardAngleRef = useRef<number | null>(null)
 
   function handleBoardRotateMouseDown(e: React.MouseEvent) {
@@ -564,8 +602,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const pdfDoc = await PDFDocument.create()
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
       const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-      const activeBoards = boards.filter((b) => !b.deleted_at)
-      for (const board of activeBoards) {
+      const activeBoardsForPdf = boards.filter((b) => !b.deleted_at)
+      for (const board of activeBoardsForPdf) {
         const page = pdfDoc.addPage([792, 612])
         page.drawText(board.label, { x: 40, y: 572, size: 20, font: fontBold, color: rgb(0, 0, 0) })
         if (board.notes) page.drawText(board.notes.slice(0, 100), { x: 40, y: 550, size: 10, font, color: rgb(0.4, 0.4, 0.4) })
@@ -619,6 +657,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   // Computed
   const filteredPhotos = photos.filter((p) => {
     if (p.deleted_at) return filters.showTrash
+    if (!p.visible) return false
     if (p.type === 'real' && !filters.showReal) return false
     if (p.type === 'concept' && !filters.showConcept) return false
     return true
@@ -653,7 +692,27 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   const isEmpty = !loading && photos.length === 0 && boards.length === 0
 
-  // Simplified cone handles — single tip handle for direction + length
+  // Carousel computed values
+  const allPhotosForCarousel = photos.filter(p => !p.deleted_at)
+  const allPhotosFiltered = carouselSearch
+    ? allPhotosForCarousel.filter(p =>
+        p.notes.toLowerCase().includes(carouselSearch.toLowerCase()) ||
+        p.type.includes(carouselSearch.toLowerCase()) ||
+        (p.created_by_name || '').toLowerCase().includes(carouselSearch.toLowerCase())
+      )
+    : allPhotosForCarousel
+
+  const visiblePhotosForCarousel = photos.filter(p => {
+    if (p.deleted_at) return false
+    if (!p.visible) return false
+    if (p.type === 'real' && !filters.showReal) return false
+    if (p.type === 'concept' && !filters.showConcept) return false
+    return true
+  })
+
+  const activeBoards = boards.filter(b => !b.deleted_at)
+
+  // Simplified cone handles -- single tip handle for direction + length
   function renderConeHandles() {
     if (!selectedPhoto) return null
     const dirRad = (selectedPhoto.direction_deg - 90) * (Math.PI / 180)
@@ -678,7 +737,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         {/* Tip label */}
         <div className="absolute text-[9px] font-semibold text-blue-600 bg-white/90 px-1 rounded pointer-events-none"
           style={{ left: tipX - 16, top: tipY + 12 }}>
-          {Math.round(selectedPhoto.direction_deg)}° / {Math.round(selectedPhoto.cone_length)}px
+          {Math.round(selectedPhoto.direction_deg)}&deg; / {Math.round(selectedPhoto.cone_length)}px
         </div>
       </div>
     )
@@ -705,7 +764,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         </div>
         <div className="absolute text-[9px] font-semibold text-gray-600 bg-white/90 px-1 rounded pointer-events-none"
           style={{ left: hx - 10, top: hy + 10 }}>
-          {Math.round(selectedBoard.facing_deg)}°
+          {Math.round(selectedBoard.facing_deg)}&deg;
         </div>
       </div>
     )
@@ -737,14 +796,48 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const ctx: AppState & AppActions = {
     photos, boards, comments,
     selectedId, selectedKind, draggingId, filters, userName,
+    topCarouselCollapsed: topCollapsed,
+    bottomCarouselCollapsed: bottomCollapsed,
+    selectedPhotoIds,
     setPhotos, setBoards, setComments,
     select, setDraggingId, toggleFilter,
     updatePhoto, updateBoard,
     addPhoto, addBoard, addComment,
     removePhoto, removeBoard,
+    togglePhotoVisibility,
+    setPhotoTags,
+    togglePhotoSelection,
+    clearPhotoSelection,
+    toggleTopCarousel: () => setTopCollapsed(c => !c),
+    toggleBottomCarousel: () => setBottomCollapsed(c => !c),
   }
 
   const floorplanUrl = process.env.NEXT_PUBLIC_FLOORPLAN_URL || ''
+
+  // Bulk action bar for bottom carousel
+  const bulkActionBar = selectedPhotoIds.size > 0 ? (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="font-medium text-blue-700">{selectedPhotoIds.size} selected</span>
+      <select
+        onChange={(e) => {
+          if (e.target.value) {
+            selectedPhotoIds.forEach(pid => {
+              updatePhoto(pid, { board_id: e.target.value })
+              updatePhotoDb(pid, { board_id: e.target.value })
+            })
+            clearPhotoSelection()
+            toast.success(`Assigned ${selectedPhotoIds.size} photos`)
+          }
+          e.target.value = ''
+        }}
+        className="border border-gray-200 rounded px-2 py-0.5 text-xs text-gray-700"
+      >
+        <option value="">Assign to board...</option>
+        {activeBoards.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
+      </select>
+      <button onClick={clearPhotoSelection} className="text-gray-500 hover:text-gray-700">Clear</button>
+    </div>
+  ) : undefined
 
   return (
     <AppContext value={ctx}>
@@ -762,7 +855,37 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           boardCount={boardCount}
           trashCount={trashCount}
         />
-        <div className="flex-1 flex overflow-hidden">
+
+        {/* TOP CAROUSEL: All Items */}
+        <CarouselPanel
+          title="All Items"
+          count={allPhotosForCarousel.length}
+          collapsed={topCollapsed}
+          onToggle={() => setTopCollapsed(c => !c)}
+          position="top"
+          actionBar={
+            <input
+              placeholder="Search..."
+              value={carouselSearch}
+              onChange={(e) => setCarouselSearch(e.target.value)}
+              className="text-xs border rounded px-2 py-0.5 w-48"
+            />
+          }
+        >
+          {allPhotosFiltered.map(photo => (
+            <PhotoCard
+              key={photo.id}
+              photo={photo}
+              size="sm"
+              showVisibilityToggle
+              boardLabel={boards.find(b => b.id === photo.board_id)?.label}
+              onClick={() => { select(photo.id, 'photo') }}
+              onToggleVisibility={() => togglePhotoVisibility(photo.id)}
+            />
+          ))}
+        </CarouselPanel>
+
+        <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Canvas area */}
           <div
             className="flex-1 overflow-hidden relative"
@@ -847,7 +970,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                 <div className="bg-white rounded-xl shadow-xl px-8 py-6 flex flex-col items-center gap-2">
                   <Upload className="w-10 h-10 text-blue-500" />
                   <span className="text-lg font-semibold text-gray-700">Drop photos here</span>
-                  <span className="text-sm text-gray-400">They'll be placed on the floor plan</span>
+                  <span className="text-sm text-gray-400">They&apos;ll be placed on the floor plan</span>
                 </div>
               </div>
             )}
@@ -927,6 +1050,49 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
             <SidePanel onDelete={handleSoftDelete} onRestore={handleRestore} />
           )}
         </div>
+
+        {/* BOTTOM CAROUSEL: Visible Photos */}
+        <CarouselPanel
+          title="Visible Photos"
+          count={visiblePhotosForCarousel.length}
+          collapsed={bottomCollapsed}
+          onToggle={() => setBottomCollapsed(c => !c)}
+          position="bottom"
+          actionBar={bulkActionBar}
+        >
+          {visiblePhotosForCarousel.map(photo => (
+            <PhotoCard
+              key={photo.id}
+              photo={photo}
+              size="md"
+              showCheckbox
+              draggable
+              isChecked={selectedPhotoIds.has(photo.id)}
+              onClick={() => select(photo.id, 'photo')}
+              onToggleSelect={() => togglePhotoSelection(photo.id)}
+            />
+          ))}
+        </CarouselPanel>
+
+        {/* BOTTOM CAROUSEL: Boards */}
+        <CarouselPanel
+          title="Boards"
+          count={activeBoards.length}
+          collapsed={bottomCollapsed}
+          onToggle={() => setBottomCollapsed(c => !c)}
+          position="bottom"
+        >
+          {activeBoards.map(board => (
+            <BoardCard
+              key={board.id}
+              board={board}
+              assignedPhotos={photos.filter(p => p.board_id === board.id && !p.deleted_at)}
+              selected={selectedId === board.id}
+              onSelect={() => select(board.id, 'board')}
+              onDropPhoto={(photoId) => { updatePhoto(photoId, { board_id: board.id }); updatePhotoDb(photoId, { board_id: board.id }) }}
+            />
+          ))}
+        </CarouselPanel>
 
         {/* Type picker modal */}
         {typePickerQueue.length > 0 && (

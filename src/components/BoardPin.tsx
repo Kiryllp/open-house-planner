@@ -92,20 +92,6 @@ export function BoardPin({ board, selected, dimmed, highlighted, photoCount, onC
               : '0 1px 3px rgba(0,0,0,0.2)',
           }}
         />
-        {/* Facing triangle */}
-        <div
-          style={{
-            position: 'absolute',
-            right: -7,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            width: 0,
-            height: 0,
-            borderTop: '5px solid transparent',
-            borderBottom: '5px solid transparent',
-            borderLeft: '7px solid #4b5563',
-          }}
-        />
       </div>
 
       {/* Label + photo count */}
