@@ -5,14 +5,13 @@ import type { Photo } from '@/lib/types'
 interface PhotoPinProps {
   photo: Photo
   selected: boolean
-  dimmed: boolean
-  highlighted: boolean
-  coneOpacity: number
   onClick: (e: React.MouseEvent) => void
   onMouseDown: (e: React.MouseEvent) => void
 }
 
-export function PhotoPin({ photo, selected, dimmed, highlighted, coneOpacity, onClick, onMouseDown }: PhotoPinProps) {
+export function PhotoPin({ photo, selected, onClick, onMouseDown }: PhotoPinProps) {
+  if (photo.pin_x == null || photo.pin_y == null) return null
+
   const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
   const dirRad = (photo.direction_deg - 90) * (Math.PI / 180)
   const halfFov = (photo.fov_deg / 2) * (Math.PI / 180)
@@ -23,7 +22,6 @@ export function PhotoPin({ photo, selected, dimmed, highlighted, coneOpacity, on
   const tipX2 = Math.cos(dirRad + halfFov) * len
   const tipY2 = Math.sin(dirRad + halfFov) * len
 
-  // Center direction line
   const centerX = Math.cos(dirRad) * len
   const centerY = Math.sin(dirRad) * len
 
@@ -38,7 +36,6 @@ export function PhotoPin({ photo, selected, dimmed, highlighted, coneOpacity, on
         top: `${photo.pin_y}%`,
         transform: 'translate(-50%, -50%)',
         zIndex: selected ? 20 : 10,
-        opacity: dimmed ? 0.35 : (highlighted === false ? 0.5 : 1),
         pointerEvents: 'auto',
         transition: 'opacity 0.2s ease',
       }}
@@ -46,44 +43,41 @@ export function PhotoPin({ photo, selected, dimmed, highlighted, coneOpacity, on
       data-pin-kind="photo"
     >
       {/* Cone SVG */}
-      {coneOpacity > 0 && (
-        <svg
-          className="absolute pointer-events-none"
-          style={{
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: svgSize,
-            height: svgSize,
-            overflow: 'visible',
-          }}
-        >
-          <defs>
-            <radialGradient id={`cone-grad-${photo.id}`} cx="0%" cy="0%" r="100%">
-              <stop offset="0%" stopColor={color} stopOpacity={(selected ? 0.35 : 0.25) * coneOpacity} />
-              <stop offset="100%" stopColor={color} stopOpacity={0.05 * coneOpacity} />
-            </radialGradient>
-          </defs>
-          <polygon
-            points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
-            fill={`url(#cone-grad-${photo.id})`}
+      <svg
+        className="absolute pointer-events-none"
+        style={{
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: svgSize,
+          height: svgSize,
+          overflow: 'visible',
+        }}
+      >
+        <defs>
+          <radialGradient id={`cone-grad-${photo.id}`} cx="0%" cy="0%" r="100%">
+            <stop offset="0%" stopColor={color} stopOpacity={selected ? 0.35 : 0.25} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.05} />
+          </radialGradient>
+        </defs>
+        <polygon
+          points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
+          fill={`url(#cone-grad-${photo.id})`}
+          stroke={color}
+          strokeOpacity={selected ? 0.7 : 0.4}
+          strokeWidth={selected ? 1.5 : 1}
+        />
+        {selected && (
+          <line
+            x1={svgCenter} y1={svgCenter}
+            x2={centerX + svgCenter} y2={centerY + svgCenter}
             stroke={color}
-            strokeOpacity={(selected ? 0.7 : 0.4) * coneOpacity}
-            strokeWidth={selected ? 1.5 : 1}
+            strokeOpacity={0.5}
+            strokeWidth={1}
+            strokeDasharray="4 3"
           />
-          {/* Center direction line */}
-          {selected && (
-            <line
-              x1={svgCenter} y1={svgCenter}
-              x2={centerX + svgCenter} y2={centerY + svgCenter}
-              stroke={color}
-              strokeOpacity={0.5 * coneOpacity}
-              strokeWidth={1}
-              strokeDasharray="4 3"
-            />
-          )}
-        </svg>
-      )}
+        )}
+      </svg>
 
       {/* Pin circle */}
       <div
