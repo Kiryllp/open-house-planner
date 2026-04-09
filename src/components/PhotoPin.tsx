@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { Photo } from '@/lib/types'
 
 interface PhotoPinProps {
@@ -9,7 +10,7 @@ interface PhotoPinProps {
   onMouseDown: (e: React.MouseEvent) => void
 }
 
-export function PhotoPin({ photo, selected, onClick, onMouseDown }: PhotoPinProps) {
+export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMouseDown }: PhotoPinProps) {
   if (photo.pin_x == null || photo.pin_y == null) return null
 
   const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
@@ -98,4 +99,7 @@ export function PhotoPin({ photo, selected, onClick, onMouseDown }: PhotoPinProp
       />
     </div>
   )
-}
+}, (prev, next) =>
+  prev.photo === next.photo &&
+  prev.selected === next.selected
+)

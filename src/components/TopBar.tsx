@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useRef } from 'react'
-import { User, ImagePlus, Plus, ArrowLeft } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { User, ImagePlus, Plus, ArrowLeft, WifiOff, Loader2 } from 'lucide-react'
 import type { AppMode } from '@/lib/types'
+
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
 interface TopBarProps {
   userName: string
@@ -12,14 +14,19 @@ interface TopBarProps {
   onBack: () => void
   mode: AppMode
   boardLabel?: string
+  connectionStatus: ConnectionStatus
 }
 
 export function TopBar({
-  userName, onChangeName, onAddBoard, onUploadPhotos, onBack, mode, boardLabel,
+  userName, onChangeName, onAddBoard, onUploadPhotos, onBack, mode, boardLabel, connectionStatus,
 }: TopBarProps) {
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(userName)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setNameValue(userName)
+  }, [userName])
 
   function handleNameSubmit() {
     const trimmed = nameValue.trim()
@@ -56,6 +63,13 @@ export function TopBar({
       </h1>
 
       <div className="h-6 w-px bg-gray-200" />
+
+      {connectionStatus !== 'connected' && (
+        <div className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+          {connectionStatus === 'connecting' ? <Loader2 className="h-3 w-3 animate-spin" /> : <WifiOff className="h-3 w-3" />}
+          {connectionStatus === 'connecting' ? 'Connecting…' : 'Live sync paused'}
+        </div>
+      )}
 
       {/* User name */}
       {editingName ? (

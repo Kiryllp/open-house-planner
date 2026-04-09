@@ -1,8 +1,11 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { REALTIME_SUBSCRIBE_STATES, type RealtimePostgresChangesPayload } from '@supabase/realtime-js'
 import { createClient } from './supabase/client'
 import type { Board, Photo } from './types'
+
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
 interface UseSupabaseDataProps {
   setPhotos: (photos: Photo[]) => void
@@ -16,6 +19,7 @@ interface UseSupabaseDataProps {
   draggingId: string | null
   onLoaded?: () => void
   onError?: (message: string) => void
+  onConnectionStatusChange?: (status: ConnectionStatus) => void
 }
 
 export function useSupabaseData(props: UseSupabaseDataProps) {
@@ -27,6 +31,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     draggingId,
     onLoaded,
     onError,
+    onConnectionStatusChange,
   } = props
 
   const draggingIdRef = useRef(draggingId)
@@ -35,11 +40,15 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
   const cbRef = useRef({ updatePhoto, updateBoard, addPhoto, addBoard, removePhoto, removeBoard })
   cbRef.current = { updatePhoto, updateBoard, addPhoto, addBoard, removePhoto, removeBoard }
 
+  const lifecycleRef = useRef({ onLoaded, onError, onConnectionStatusChange })
+  lifecycleRef.current = { onLoaded, onError, onConnectionStatusChange }
+  const loadDataRef = useRef<(() => Promise<void>) | null>(null)
+
   // Load initial data
   useEffect(() => {
     const supabase = createClient()
 
-    async function loadData() {
+    loadDataRef.current = async () => {
       try {
         const [photosRes, boardsRes] = await Promise.all([
           supabase.from('photos').select('*').order('created_at', { ascending: true }),
@@ -51,24 +60,27 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
 
         if (photosRes.data) setPhotos(photosRes.data)
         if (boardsRes.data) setBoards(boardsRes.data)
-        onLoaded?.()
+        lifecycleRef.current.onLoaded?.()
       } catch (err) {
         console.error('Failed to load data:', err)
-        onError?.((err as Error).message || 'Failed to load data')
+        lifecycleRef.current.onError?.((err as Error).message || 'Failed to load data')
       }
     }
 
-    loadData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    void loadDataRef.current()
+  }, [setPhotos, setBoards])
 
   // Realtime subscriptions
   useEffect(() => {
     const supabase = createClient()
+    let hasConnectedOnce = false
+    let shouldReloadOnReconnect = false
+
+    lifecycleRef.current.onConnectionStatusChange?.('connecting')
 
     const channel = supabase
       .channel('realtime-all')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload: RealtimePostgresChangesPayload<Photo>) => {
         const cb = cbRef.current
         if (payload.eventType === 'INSERT') {
           cb.addPhoto(payload.new as Photo)
@@ -77,10 +89,10 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
           if (updated.id === draggingIdRef.current) return
           cb.updatePhoto(updated.id, updated)
         } else if (payload.eventType === 'DELETE') {
-          cb.removePhoto((payload.old as any).id)
+          if (payload.old.id) cb.removePhoto(payload.old.id)
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload: RealtimePostgresChangesPayload<Board>) => {
         const cb = cbRef.current
         if (payload.eventType === 'INSERT') {
           cb.addBoard(payload.new as Board)
@@ -89,14 +101,33 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
           if (updated.id === draggingIdRef.current) return
           cb.updateBoard(updated.id, updated)
         } else if (payload.eventType === 'DELETE') {
-          cb.removeBoard((payload.old as any).id)
+          if (payload.old.id) cb.removeBoard(payload.old.id)
         }
       })
-      .subscribe()
+      .subscribe((status: REALTIME_SUBSCRIBE_STATES) => {
+        if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
+          lifecycleRef.current.onConnectionStatusChange?.('connected')
+          if (shouldReloadOnReconnect && loadDataRef.current) {
+            void loadDataRef.current()
+          }
+          hasConnectedOnce = true
+          shouldReloadOnReconnect = false
+          return
+        }
+
+        if (
+          status === REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR ||
+          status === REALTIME_SUBSCRIBE_STATES.TIMED_OUT ||
+          status === REALTIME_SUBSCRIBE_STATES.CLOSED
+        ) {
+          lifecycleRef.current.onConnectionStatusChange?.('disconnected')
+          shouldReloadOnReconnect = hasConnectedOnce
+        }
+      })
 
     return () => {
-      supabase.removeChannel(channel)
+      lifecycleRef.current.onConnectionStatusChange?.('connecting')
+      void supabase.removeChannel(channel)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 }

@@ -12,20 +12,31 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!password.trim()) {
+      setError('Enter the password to continue')
+      return
+    }
+
     setLoading(true)
     setError('')
 
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    })
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
 
-    if (res.ok) {
-      router.push('/')
-      router.refresh()
-    } else {
+      if (res.ok) {
+        router.push('/')
+        router.refresh()
+        return
+      }
+
       setError('Incorrect password')
+    } catch {
+      setError('Could not sign in. Check your connection and try again.')
+    } finally {
       setLoading(false)
     }
   }
@@ -49,7 +60,7 @@ export default function LoginPage() {
           {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !password.trim()}
             className="w-full mt-4 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             {loading ? 'Signing in...' : 'Sign In'}

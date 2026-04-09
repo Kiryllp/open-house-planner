@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { User } from 'lucide-react'
 
 interface NameModalProps {

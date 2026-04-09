@@ -1,6 +1,9 @@
 import { createClient } from './supabase/client'
 import type { Board, Photo } from './types'
 
+export type PhotoInsert = Omit<Photo, 'id' | 'created_at'>
+export type BoardInsert = Omit<Board, 'id' | 'created_at'>
+
 function getClient() {
   return createClient()
 }
@@ -9,13 +12,15 @@ export async function uploadPhoto(file: File): Promise<string> {
   const supabase = getClient()
   const ext = file.name.split('.').pop() || 'jpg'
   const fileName = `${crypto.randomUUID()}.${ext}`
-  const { error } = await supabase.storage.from('photos').upload(fileName, file)
+  const { error } = await supabase.storage.from('photos').upload(fileName, file, {
+    contentType: file.type || undefined,
+  })
   if (error) throw error
   const { data } = supabase.storage.from('photos').getPublicUrl(fileName)
   return data.publicUrl
 }
 
-export async function insertPhoto(photo: Omit<Photo, 'id' | 'created_at'>): Promise<Photo> {
+export async function insertPhoto(photo: PhotoInsert): Promise<Photo> {
   const supabase = getClient()
   const { data, error } = await supabase.from('photos').insert(photo).select().single()
   if (error) throw error
@@ -28,7 +33,7 @@ export async function updatePhotoDb(id: string, updates: Partial<Photo>) {
   if (error) throw error
 }
 
-export async function insertBoard(board: Omit<Board, 'id' | 'created_at'>): Promise<Board> {
+export async function insertBoard(board: BoardInsert): Promise<Board> {
   const supabase = getClient()
   const { data, error } = await supabase.from('boards').insert(board).select().single()
   if (error) throw error

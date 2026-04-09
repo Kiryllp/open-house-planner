@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
@@ -26,6 +27,20 @@ interface MainScreenProps {
   onChangeName: (name: string) => void
 }
 
+type UploadProgressItem = {
+  id: string
+  name: string
+  size: number
+  done: boolean
+}
+
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
+
+const DRAG_DISTANCE_THRESHOLD = 6
+const DRAG_HOLD_THRESHOLD_MS = 120
+const DRAG_FORCE_THRESHOLD = 14
+const PANEL_TRANSITION_MS = 220
+
 export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   // Core state
   const [photos, setPhotos] = useState<Photo[]>([])
@@ -45,20 +60,26 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const [dragOverCount, setDragOverCount] = useState(0)
 
   // Upload progress
-  const [uploading, setUploading] = useState<{ id: string; name: string; done: boolean }[]>([])
+  const [uploading, setUploading] = useState<UploadProgressItem[]>([])
+  const [photoActionIds, setPhotoActionIds] = useState<string[]>([])
+  const [boardLabelDraft, setBoardLabelDraft] = useState<string | null>(null)
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting')
+  const [panelBoardId, setPanelBoardId] = useState<string | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
 
   // Floor plan error
   const [floorplanError, setFloorplanError] = useState(false)
 
   // Refs
   const canvasRef = useRef<HTMLDivElement>(null)
-  const floorplanRef = useRef<HTMLImageElement>(null)
-  const dragStartRef = useRef<{ id: string; kind: 'photo' | 'board'; startX: number; startY: number; pinX: number; pinY: number } | null>(null)
+  const floorplanRef = useRef<HTMLElement | null>(null)
+  const dragStartRef = useRef<{ id: string; kind: 'photo' | 'board'; startX: number; startY: number; pinX: number; pinY: number; startedAt: number } | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isDraggingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const handleJustFinishedRef = useRef(false)
   const lastDragPosRef = useRef<{ x: number; y: number } | null>(null)
+  const lastConnectionStatusRef = useRef<ConnectionStatus>('connecting')
 
   // Actions
   const select = useCallback((id: string | null, kind: 'photo' | 'board' | null) => {
@@ -90,6 +111,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   const removePhoto = useCallback((id: string) => {
     setPhotos((prev) => prev.filter((p) => p.id !== id))
+    setPhotoActionIds((prev) => prev.filter((photoId) => photoId !== id))
   }, [])
 
   const removeBoard = useCallback((id: string) => {
@@ -115,37 +137,64 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     setSelectedKind(null)
   }, [])
 
-  // Fixed: async DB calls moved OUT of state setter, with error handling
-  const assignPhotoToBoard = useCallback((photoId: string, boardId: string) => {
-    // Find and unassign the previous photo on this board
-    setPhotos(prev => {
-      const prevAssigned = prev.find(p => p.board_id === boardId && p.id !== photoId && !p.deleted_at)
-      const next = prev.map(p => {
-        if (p.id === prevAssigned?.id) return { ...p, board_id: null }
-        if (p.id === photoId) return { ...p, board_id: boardId }
-        return p
-      })
-      // Fire DB updates after computing new state (not inside map)
-      if (prevAssigned) {
-        updatePhotoDb(prevAssigned.id, { board_id: null }).catch(() => {
-          toast.error('Failed to unassign previous photo')
-        })
-      }
-      updatePhotoDb(photoId, { board_id: boardId }).catch(() => {
-        toast.error('Failed to assign photo')
-      })
-      return next
+  const updatePendingPhotoIds = useCallback((ids: string[], pending: boolean) => {
+    const uniqueIds = Array.from(new Set(ids))
+    setPhotoActionIds((prev) => {
+      if (pending) return Array.from(new Set([...prev, ...uniqueIds]))
+      const toRemove = new Set(uniqueIds)
+      return prev.filter((id) => !toRemove.has(id))
     })
-    toast.success('Photo assigned')
   }, [])
 
-  const unassignPhoto = useCallback((photoId: string) => {
-    setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, board_id: null } : p))
-    updatePhotoDb(photoId, { board_id: null }).catch(() => {
-      toast.error('Failed to unassign photo')
+  const assignPhotoToBoard = useCallback((photoId: string, boardId: string) => {
+    const targetPhoto = photos.find((photo) => photo.id === photoId && !photo.deleted_at)
+    if (!targetPhoto) return
+
+    const boardLabel = boards.find((board) => board.id === boardId)?.label || 'board'
+    const photosToUnassign = photos.filter((photo) => photo.board_id === boardId && photo.id !== photoId && !photo.deleted_at)
+    const affectedIds = Array.from(new Set([photoId, ...photosToUnassign.map((photo) => photo.id)]))
+    const rollbackBoardIds = new Map(affectedIds.map((id) => [id, photos.find((photo) => photo.id === id)?.board_id ?? null]))
+
+    updatePendingPhotoIds(affectedIds, true)
+    setPhotos((prev) => prev.map((photo) => {
+      if (photosToUnassign.some((other) => other.id === photo.id)) return { ...photo, board_id: null }
+      if (photo.id === photoId) return { ...photo, board_id: boardId }
+      return photo
+    }))
+
+    void Promise.all([
+      ...photosToUnassign.map((photo) => updatePhotoDb(photo.id, { board_id: null })),
+      updatePhotoDb(photoId, { board_id: boardId }),
+    ]).then(() => {
+      toast.success(`Photo assigned to ${boardLabel}`)
+    }).catch(() => {
+      setPhotos((prev) => prev.map((photo) => rollbackBoardIds.has(photo.id)
+        ? { ...photo, board_id: rollbackBoardIds.get(photo.id) ?? null }
+        : photo
+      ))
+      toast.error('Failed to assign photo. Your local changes were rolled back.')
+    }).finally(() => {
+      updatePendingPhotoIds(affectedIds, false)
     })
-    toast('Photo removed from board')
-  }, [])
+  }, [boards, photos, updatePendingPhotoIds])
+
+  const unassignPhoto = useCallback((photoId: string) => {
+    const photo = photos.find((item) => item.id === photoId && !item.deleted_at)
+    if (!photo) return
+    const previousBoardId = photo.board_id
+
+    updatePendingPhotoIds([photoId], true)
+    setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: null } : item))
+
+    void updatePhotoDb(photoId, { board_id: null }).then(() => {
+      toast.success('Photo removed from board')
+    }).catch(() => {
+      setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: previousBoardId } : item))
+      toast.error('Failed to remove photo from the board')
+    }).finally(() => {
+      updatePendingPhotoIds([photoId], false)
+    })
+  }, [photos, updatePendingPhotoIds])
 
   const toggleShowAllPhotos = useCallback(() => {
     setShowAllPhotos(prev => !prev)
@@ -160,6 +209,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     draggingId,
     onLoaded: () => setLoading(false),
     onError: (msg) => { setLoading(false); setLoadError(msg) },
+    onConnectionStatusChange: setConnectionStatus,
   })
 
   // Coordinate conversion
@@ -172,32 +222,41 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) }
   }
 
+  function getUploadErrorMessage(error: unknown, fileName: string, pinX: number | null, pinY: number | null) {
+    const message = (error as Error).message || 'Upload failed'
+
+    if ((pinX == null || pinY == null) && /null value in column "(pin_x|pin_y)"/i.test(message)) {
+      return `Failed to upload ${fileName}: the database schema is outdated. Apply migration 002 to allow pool photos without map pins.`
+    }
+
+    return `Failed to upload ${fileName}: ${message}`
+  }
+
   // Upload photos — in board focus mode, only the FIRST photo is auto-assigned (1 per board)
   async function doUploadPhotos(files: File[], pinX: number | null, pinY: number | null) {
     const boardId = mode.kind === 'board-focus' ? mode.boardId : null
-    const newUploads = files.map(f => ({ id: crypto.randomUUID(), name: f.name, done: false }))
+    const newUploads = files.map((file) => ({ id: crypto.randomUUID(), name: file.name, size: file.size, done: false }))
     setUploading(prev => [...prev, ...newUploads])
 
     let firstAssigned = false
+    let successfulUploads = 0
     for (let i = 0; i < files.length; i++) {
       try {
         const url = await uploadPhoto(files[i])
-        // In board focus: assign only the first uploaded photo (1-per-board constraint)
         const assignToBoard = boardId && !firstAssigned ? boardId : null
         if (assignToBoard) {
-          // Unassign previous photo from this board
-          const prevPhoto = photos.find(p => p.board_id === boardId && !p.deleted_at)
-          if (prevPhoto) {
-            updatePhoto(prevPhoto.id, { board_id: null })
-            updatePhotoDb(prevPhoto.id, { board_id: null }).catch(() => {})
-          }
+          const previousBoardPhotos = photos.filter((photo) => photo.board_id === boardId && !photo.deleted_at)
+          previousBoardPhotos.forEach((photo) => {
+            updatePhoto(photo.id, { board_id: null })
+          })
+          await Promise.all(previousBoardPhotos.map((photo) => updatePhotoDb(photo.id, { board_id: null })))
           firstAssigned = true
         }
         await insertPhoto({
           file_url: url,
           type: 'real',
-          pin_x: pinX != null ? Math.max(0, Math.min(100, pinX + i * 2)) : null as any,
-          pin_y: pinY != null ? Math.max(0, Math.min(100, pinY + i * 2)) : null as any,
+          pin_x: pinX != null ? Math.max(0, Math.min(100, pinX + i * 2)) : null,
+          pin_y: pinY != null ? Math.max(0, Math.min(100, pinY + i * 2)) : null,
           direction_deg: 0,
           fov_deg: 70,
           cone_length: 120,
@@ -211,15 +270,24 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           tags: [],
           color: null,
         })
+        successfulUploads += 1
         setUploading(prev => prev.map((u) => u.id === newUploads[i].id ? { ...u, done: true } : u))
       } catch (err) {
-        toast.error(`Failed to upload ${files[i].name}: ${(err as Error).message}`)
+        toast.error(getUploadErrorMessage(err, files[i].name, pinX, pinY))
         setUploading(prev => prev.filter(u => u.id !== newUploads[i].id))
       }
     }
 
-    if (files.length > 1 && boardId) {
-      toast.info(`${files.length} photos uploaded. First photo assigned to board, rest added to pool.`)
+    if (successfulUploads > 0) {
+      if (boardId && files.length > 1) {
+        toast.success(`${successfulUploads} photos uploaded. The first photo was assigned to this board.`)
+      } else if (boardId) {
+        toast.success('Photo uploaded and assigned to this board')
+      } else if (successfulUploads === 1) {
+        toast.success('Photo uploaded')
+      } else {
+        toast.success(`${successfulUploads} photos uploaded`)
+      }
     }
 
     setTimeout(() => setUploading(prev => prev.filter(u => !u.done)), 2000)
@@ -231,7 +299,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     e.stopPropagation()
     setDragOverCount(0)
     const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
-    if (files.length === 0) return
+    if (files.length === 0) {
+      toast.error('Only image files can be uploaded')
+      return
+    }
 
     const pos = screenToPercent(e.clientX, e.clientY)
     if (!pos) return
@@ -257,7 +328,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   // Upload via button (no pin coordinates)
   function handleUploadPhotos(files: FileList) {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'))
-    if (imageFiles.length === 0) return
+    if (imageFiles.length === 0) {
+      toast.error('Only image files can be uploaded')
+      return
+    }
     doUploadPhotos(imageFiles, null, null)
   }
 
@@ -278,7 +352,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   function handlePinMouseDown(id: string, kind: 'photo' | 'board', e: React.MouseEvent) {
     if (e.button !== 0) return
     e.stopPropagation()
-    e.preventDefault()
 
     const item = kind === 'photo' ? photos.find((p) => p.id === id) : boards.find((b) => b.id === id)
     if (!item) return
@@ -288,16 +361,24 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
     isDraggingRef.current = false
     lastDragPosRef.current = null
-    dragStartRef.current = { id, kind, startX: e.clientX, startY: e.clientY, pinX, pinY }
+    dragStartRef.current = { id, kind, startX: e.clientX, startY: e.clientY, pinX, pinY, startedAt: Date.now() }
 
     function onMouseMove(ev: MouseEvent) {
       if (!dragStartRef.current) return
       const dx = ev.clientX - dragStartRef.current.startX
       const dy = ev.clientY - dragStartRef.current.startY
-      if (Math.hypot(dx, dy) < 3 && !isDraggingRef.current) return
+      const distance = Math.hypot(dx, dy)
+      const elapsed = Date.now() - dragStartRef.current.startedAt
+
+      if (!isDraggingRef.current) {
+        if (distance < DRAG_DISTANCE_THRESHOLD) return
+        if (elapsed < DRAG_HOLD_THRESHOLD_MS && distance < DRAG_FORCE_THRESHOLD) return
+        setDraggingId(id)
+        document.body.style.cursor = 'grabbing'
+      }
 
       isDraggingRef.current = true
-      setDraggingId(id)
+      ev.preventDefault()
 
       const img = floorplanRef.current
       if (!img) return
@@ -321,15 +402,15 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         const { x, y } = lastDragPosRef.current
         if (kind === 'photo') updatePhotoDb(id, { pin_x: x, pin_y: y }).catch(() => toast.error('Failed to save position'))
         else updateBoardDb(id, { pin_x: x, pin_y: y }).catch(() => toast.error('Failed to save position'))
+        handleJustFinishedRef.current = true
+        setTimeout(() => { handleJustFinishedRef.current = false }, 50)
       }
-
-      handleJustFinishedRef.current = true
-      setTimeout(() => { handleJustFinishedRef.current = false }, 50)
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
       dragStartRef.current = null
       lastDragPosRef.current = null
       setDraggingId(null)
+      document.body.style.cursor = ''
       setTimeout(() => { isDraggingRef.current = false }, 0)
     }
 
@@ -449,12 +530,20 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   // Toggle photo type
   const togglePhotoType = useCallback((photoId: string) => {
-    const photo = photos.find(p => p.id === photoId)
+    const photo = photos.find(p => p.id === photoId && !p.deleted_at)
     if (!photo) return
     const newType = photo.type === 'real' ? 'concept' : 'real'
+    updatePendingPhotoIds([photoId], true)
     updatePhoto(photoId, { type: newType })
-    updatePhotoDb(photoId, { type: newType }).catch(() => toast.error('Failed to update photo type'))
-  }, [photos, updatePhoto])
+    void updatePhotoDb(photoId, { type: newType }).then(() => {
+      toast.success(`Photo marked as ${newType}`)
+    }).catch(() => {
+      updatePhoto(photoId, { type: photo.type })
+      toast.error('Failed to update photo type')
+    }).finally(() => {
+      updatePendingPhotoIds([photoId], false)
+    })
+  }, [photos, updatePhoto, updatePendingPhotoIds])
 
   // Cone handle drag
   const lastConeRef = useRef<{ direction_deg: number; cone_length: number } | null>(null)
@@ -513,83 +602,161 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   // Board rotate handle
   const lastBoardAngleRef = useRef<number | null>(null)
 
-  function handleBoardRotateMouseDown(e: React.MouseEvent) {
-    e.stopPropagation()
-    e.preventDefault()
-    if (!selectedId || selectedKind !== 'board') return
-    const boardSnap = boards.find((b) => b.id === selectedId)
-    if (!boardSnap) return
-    const boardId = boardSnap.id
-    const pinX = boardSnap.pin_x
-    const pinY = boardSnap.pin_y
-    lastBoardAngleRef.current = null
-    setDraggingId(boardId)
-
-    function onMouseMove(ev: MouseEvent) {
-      const pos = screenToPercent(ev.clientX, ev.clientY)
-      if (!pos) return
-      const dx = pos.x - pinX
-      const dy = pos.y - pinY
-      let angle = Math.atan2(dy, dx) * (180 / Math.PI)
-      if (ev.shiftKey) angle = Math.round(angle / 5) * 5
-      lastBoardAngleRef.current = angle
-      updateBoard(boardId, { facing_deg: angle })
-    }
-
-    function onMouseUp() {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-      if (lastBoardAngleRef.current !== null) {
-        updateBoardDb(boardId, { facing_deg: lastBoardAngleRef.current }).catch(() => toast.error('Failed to save rotation'))
-      }
+  function handleBoardRotateMouseDown(boardId: string) {
+    return (e: React.MouseEvent) => {
+      e.stopPropagation()
+      e.preventDefault()
+      const boardSnap = boards.find((b) => b.id === boardId)
+      if (!boardSnap) return
+      const pinX = boardSnap.pin_x
+      const pinY = boardSnap.pin_y
       lastBoardAngleRef.current = null
-      setDraggingId(null)
-      handleJustFinishedRef.current = true
-      setTimeout(() => { handleJustFinishedRef.current = false }, 50)
-    }
+      setDraggingId(boardId)
 
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+      function onMouseMove(ev: MouseEvent) {
+        const pos = screenToPercent(ev.clientX, ev.clientY)
+        if (!pos) return
+        const dx = pos.x - pinX
+        const dy = pos.y - pinY
+        let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90
+        if (angle < 0) angle += 360
+        if (ev.shiftKey) angle = Math.round(angle / 5) * 5
+        lastBoardAngleRef.current = angle
+        updateBoard(boardId, { facing_deg: angle })
+      }
+
+      function onMouseUp() {
+        window.removeEventListener('mousemove', onMouseMove)
+        window.removeEventListener('mouseup', onMouseUp)
+        if (lastBoardAngleRef.current !== null) {
+          updateBoardDb(boardId, { facing_deg: lastBoardAngleRef.current }).catch(() => toast.error('Failed to save rotation'))
+        }
+        lastBoardAngleRef.current = null
+        setDraggingId(null)
+        handleJustFinishedRef.current = true
+        setTimeout(() => { handleJustFinishedRef.current = false }, 50)
+      }
+
+      window.addEventListener('mousemove', onMouseMove)
+      window.addEventListener('mouseup', onMouseUp)
+    }
   }
 
   // Computed
   const activeBoards = useMemo(() => boards.filter(b => !b.deleted_at), [boards])
   const activePhotos = useMemo(() => photos.filter(p => !p.deleted_at), [photos])
+  const activeBoardIds = useMemo(() => new Set(activeBoards.map((board) => board.id)), [activeBoards])
+  const pendingPhotoIdSet = useMemo(() => new Set(photoActionIds), [photoActionIds])
 
   const focusedBoardId = mode.kind === 'board-focus' ? mode.boardId : null
-  const focusedBoard = focusedBoardId ? boards.find(b => b.id === focusedBoardId) : null
+  const focusedBoard = focusedBoardId ? activeBoards.find(b => b.id === focusedBoardId) ?? null : null
+  const panelBoard = panelBoardId ? activeBoards.find((board) => board.id === panelBoardId) ?? null : null
 
   // If focused board no longer exists, auto-exit
+  const hasFocusedBoard = focusedBoardId ? activeBoards.some((b) => b.id === focusedBoardId) : false
+
   useEffect(() => {
-    if (mode.kind === 'board-focus' && !boards.some(b => b.id === mode.boardId)) {
+    if (focusedBoardId && !hasFocusedBoard) {
       exitBoardFocus()
       toast.info('Board was deleted')
     }
-  }, [boards, mode, exitBoardFocus])
+  }, [focusedBoardId, hasFocusedBoard, exitBoardFocus])
+
+  useEffect(() => {
+    const previous = lastConnectionStatusRef.current
+    if (previous === connectionStatus) return
+
+    if (previous === 'connected' && connectionStatus === 'disconnected') {
+      toast.error('Live sync connection lost. Changes may be stale until it reconnects.')
+    } else if (previous === 'disconnected' && connectionStatus === 'connected') {
+      toast.success('Live sync restored')
+    }
+
+    lastConnectionStatusRef.current = connectionStatus
+  }, [connectionStatus])
+
+  useEffect(() => {
+    if (focusedBoardId) {
+      setPanelBoardId(focusedBoardId)
+      const frame = window.requestAnimationFrame(() => setPanelOpen(true))
+      return () => window.cancelAnimationFrame(frame)
+    }
+
+    setPanelOpen(false)
+    const timeout = window.setTimeout(() => setPanelBoardId(null), PANEL_TRANSITION_MS)
+    return () => window.clearTimeout(timeout)
+  }, [focusedBoardId])
+
+  useEffect(() => {
+    if (focusedBoard) {
+      setBoardLabelDraft(focusedBoard.label)
+      return
+    }
+
+    setBoardLabelDraft(null)
+  }, [focusedBoard])
+
+  const { assignedPhotoByBoardId, canonicalAssignedPhotoIds } = useMemo(() => {
+    const byBoardId = new Map<string, Photo>()
+    const canonicalIds = new Set<string>()
+    const photosByBoard = new Map<string, Photo[]>()
+
+    activePhotos.forEach((photo) => {
+      if (!photo.board_id || !activeBoardIds.has(photo.board_id)) return
+      const bucket = photosByBoard.get(photo.board_id) ?? []
+      bucket.push(photo)
+      photosByBoard.set(photo.board_id, bucket)
+    })
+
+    photosByBoard.forEach((bucket, boardId) => {
+      const [canonicalPhoto] = [...bucket].sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+
+      if (!canonicalPhoto) return
+      byBoardId.set(boardId, canonicalPhoto)
+      canonicalIds.add(canonicalPhoto.id)
+    })
+
+    return { assignedPhotoByBoardId: byBoardId, canonicalAssignedPhotoIds: canonicalIds }
+  }, [activeBoardIds, activePhotos])
+
+  const focusedAssignedPhoto = focusedBoardId ? assignedPhotoByBoardId.get(focusedBoardId) ?? null : null
 
   // In board focus mode: only show photo pins assigned to this board that have pin coordinates
   const visiblePhotoPins = useMemo(() =>
-    focusedBoardId
-      ? activePhotos.filter(p => p.board_id === focusedBoardId && p.pin_x != null && p.pin_y != null)
+    focusedAssignedPhoto && focusedAssignedPhoto.pin_x != null && focusedAssignedPhoto.pin_y != null
+      ? [focusedAssignedPhoto]
       : [],
-    [focusedBoardId, activePhotos]
+    [focusedAssignedPhoto]
   )
 
   const selectedPhoto = selectedKind === 'photo' ? photos.find((p) => p.id === selectedId) : null
   const selectedBoard = selectedKind === 'board' ? boards.find((b) => b.id === selectedId) : null
 
-  // Photo URL map for board pins (first assigned photo per board)
   const boardPhotoUrls = useMemo(() => {
     const map = new Map<string, string>()
-    activePhotos.forEach(p => {
-      if (p.board_id && !map.has(p.board_id)) {
-        map.set(p.board_id, p.file_url)
-      }
+    assignedPhotoByBoardId.forEach((photo, boardId) => {
+      map.set(boardId, photo.file_url)
     })
     return map
-  }, [activePhotos])
+  }, [assignedPhotoByBoardId])
 
-  const isEmpty = !loading && !loadError && photos.length === 0 && boards.length === 0
+  const panelAssignedPhoto = panelBoard ? assignedPhotoByBoardId.get(panelBoard.id) ?? null : null
+
+  const panelGalleryPhotos = useMemo(() => {
+    if (!panelBoard) return []
+
+    return activePhotos
+      .filter((photo) => {
+        if (photo.id === panelAssignedPhoto?.id) return false
+        if (showAllPhotos) return true
+        return !canonicalAssignedPhotoIds.has(photo.id)
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [activePhotos, canonicalAssignedPhotoIds, panelAssignedPhoto?.id, panelBoard, showAllPhotos])
+
+  const isEmpty = !loading && !loadError && activePhotos.length === 0 && activeBoards.length === 0
 
   // Cone handles
   function renderConeHandles() {
@@ -620,27 +787,28 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   }
 
   function renderBoardRotateHandle() {
-    if (!selectedBoard) return null
-    const rad = selectedBoard.facing_deg * (Math.PI / 180)
+    const rotateBoard = focusedBoard ?? selectedBoard
+    if (!rotateBoard) return null
+    const rad = (rotateBoard.facing_deg - 90) * (Math.PI / 180)
     const handleDist = 35
     const hx = Math.cos(rad) * handleDist
     const hy = Math.sin(rad) * handleDist
 
     return (
-      <div className="absolute pointer-events-none" style={{ left: `${selectedBoard.pin_x}%`, top: `${selectedBoard.pin_y}%`, transform: 'translate(-50%, -50%)', zIndex: 30 }}>
+      <div className="absolute pointer-events-none" style={{ left: `${rotateBoard.pin_x}%`, top: `${rotateBoard.pin_y}%`, transform: 'translate(-50%, -50%)', zIndex: 30 }}>
         <svg className="absolute pointer-events-none" style={{ left: 0, top: 0, overflow: 'visible' }}>
           <line x1={0} y1={0} x2={hx} y2={hy} stroke="#4b5563" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.4} />
         </svg>
         <div className="handle-element absolute w-4 h-4 bg-white border-2 border-gray-600 rounded-full cursor-grab pointer-events-auto shadow-lg flex items-center justify-center"
           style={{ left: hx - 8, top: hy - 8 }}
-          onMouseDown={handleBoardRotateMouseDown}
+          onMouseDown={handleBoardRotateMouseDown(rotateBoard.id)}
           title="Drag to rotate"
         >
           <div className="w-1 h-1 bg-gray-600 rounded-full" />
         </div>
         <div className="absolute text-[9px] font-semibold text-gray-600 bg-white/90 px-1 rounded pointer-events-none"
           style={{ left: hx - 10, top: hy + 10 }}>
-          {Math.round(selectedBoard.facing_deg)}&deg;
+          {Math.round(rotateBoard.facing_deg)}&deg;
         </div>
       </div>
     )
@@ -674,10 +842,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           onUploadPhotos={handleUploadPhotos}
           onBack={exitBoardFocus}
           mode={mode}
-          boardLabel={focusedBoard?.label}
+          boardLabel={boardLabelDraft ?? focusedBoard?.label}
+          connectionStatus={connectionStatus}
         />
 
-        <div className="flex-1 flex overflow-hidden min-h-0">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {/* Canvas area */}
           <div
             className="flex-1 overflow-hidden relative min-w-0"
@@ -706,7 +875,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                 >
                   {floorplanUrl && !floorplanError ? (
                     <img
-                      ref={floorplanRef}
+                      ref={(node) => { floorplanRef.current = node }}
                       src={floorplanUrl}
                       alt="Floor plan"
                       className="max-w-none select-none shadow-lg rounded-sm"
@@ -716,7 +885,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                     />
                   ) : (
                     <div
-                      ref={floorplanRef as React.Ref<HTMLDivElement>}
+                      ref={(node) => { floorplanRef.current = node }}
                       className="w-[800px] h-[600px] bg-white border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 rounded-lg"
                     >
                       {floorplanError
@@ -743,6 +912,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       board={board}
                       selected={focusedBoardId === board.id}
                       focused={focusedBoardId ? focusedBoardId === board.id : true}
+                      showCone={focusedBoardId === board.id}
                       assignedPhotoUrl={boardPhotoUrls.get(board.id) || null}
                       onClick={(e) => handlePinClick(board.id, 'board', e)}
                       onMouseDown={(e) => handlePinMouseDown(board.id, 'board', e)}
@@ -764,6 +934,14 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   <span className="text-sm text-gray-400">
                     {mode.kind === 'board-focus' ? "First photo will be assigned to this board" : "They'll be placed on the floor plan"}
                   </span>
+                </div>
+              </div>
+            )}
+
+            {mode.kind === 'board-focus' && (
+              <div className="pointer-events-none absolute top-4 left-4 z-20">
+                <div className="rounded-full border border-gray-200 bg-white/92 px-3 py-1.5 text-xs text-gray-600 shadow-sm backdrop-blur">
+                  Click another board to switch. Use Back or Esc to return.
                 </div>
               </div>
             )}
@@ -828,13 +1006,14 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
             />
 
             {/* Upload progress */}
-            {uploading.length > 0 && (
+            {uploading.length > 0 && mode.kind !== 'board-focus' && (
               <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-40 min-w-[200px]">
                 <div className="text-xs font-semibold text-gray-600 mb-2">Uploading...</div>
                 {uploading.map((u) => (
                   <div key={u.id} className="flex items-center gap-2 text-xs text-gray-500 py-0.5">
                     {u.done ? <span className="text-green-500">&#10003;</span> : <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
                     <span className="truncate max-w-[150px]">{u.name}</span>
+                    <span className="ml-auto text-gray-400">{u.size >= 1024 * 1024 ? `${(u.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(u.size / 1024))} KB`}</span>
                   </div>
                 ))}
               </div>
@@ -842,26 +1021,40 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           </div>
 
           {/* Board Focus Panel (side panel) */}
-          {focusedBoard && (
-            <BoardFocusPanel
-              board={focusedBoard}
-              photos={photos}
-              boards={activeBoards}
-              showAllPhotos={showAllPhotos}
-              onToggleShowAll={toggleShowAllPhotos}
-              onAssignPhoto={(photoId) => assignPhotoToBoard(photoId, focusedBoard.id)}
-              onUnassignPhoto={() => {
-                const assigned = photos.find(p => p.board_id === focusedBoard.id && !p.deleted_at)
-                if (assigned) unassignPhoto(assigned.id)
-              }}
-              onDeletePhoto={deletePhoto}
-              onTogglePhotoType={togglePhotoType}
-              onUploadPhotos={handleUploadPhotos}
-              onDeleteBoard={requestDeleteBoard}
-              onBack={exitBoardFocus}
-              updateBoard={updateBoard}
-            />
-          )}
+          <div
+            className={`absolute inset-y-0 right-0 z-40 w-full max-w-full transition-[width] duration-200 ease-out md:static md:shrink-0 ${
+              panelBoard ? 'md:w-[min(40vw,420px)]' : 'w-0 md:w-0'
+            }`}
+          >
+            <div className={`h-full transition-all duration-200 ease-out ${panelOpen ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-6 opacity-0'}`}>
+              {panelBoard && (
+                <BoardFocusPanel
+                  key={panelBoard.id}
+                  board={panelBoard}
+                  photos={photos}
+                  boards={activeBoards}
+                  assignedPhoto={panelAssignedPhoto}
+                  galleryPhotos={panelGalleryPhotos}
+                  canonicalAssignedPhotoIds={canonicalAssignedPhotoIds}
+                  pendingPhotoIds={pendingPhotoIdSet}
+                  uploading={uploading}
+                  showAllPhotos={showAllPhotos}
+                  onToggleShowAll={toggleShowAllPhotos}
+                  onAssignPhoto={(photoId) => assignPhotoToBoard(photoId, panelBoard.id)}
+                  onUnassignPhoto={() => {
+                    if (panelAssignedPhoto) unassignPhoto(panelAssignedPhoto.id)
+                  }}
+                  onDeletePhoto={deletePhoto}
+                  onTogglePhotoType={togglePhotoType}
+                  onUploadPhotos={handleUploadPhotos}
+                  onDeleteBoard={requestDeleteBoard}
+                  onBack={exitBoardFocus}
+                  onLabelDraftChange={setBoardLabelDraft}
+                  updateBoard={updateBoard}
+                />
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Delete confirmation dialog */}
