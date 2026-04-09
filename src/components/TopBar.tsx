@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { User, ImagePlus, Plus, ArrowLeft, WifiOff, Loader2 } from 'lucide-react'
+import { User, ImagePlus, Plus, ArrowLeft, WifiOff, Loader2, Undo2, Redo2 } from 'lucide-react'
 import type { AppMode } from '@/lib/types'
+import type { UserPresence } from '@/lib/useSupabaseData'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
@@ -15,10 +16,19 @@ interface TopBarProps {
   mode: AppMode
   boardLabel?: string
   connectionStatus: ConnectionStatus
+  totalBoards: number
+  assignedBoards: number
+  presenceUsers: UserPresence[]
+  boardId: string | null
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
 }
 
 export function TopBar({
   userName, onChangeName, onAddBoard, onUploadPhotos, onBack, mode, boardLabel, connectionStatus,
+  totalBoards, assignedBoards, presenceUsers, boardId, canUndo, canRedo, onUndo, onRedo,
 }: TopBarProps) {
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(userName)
@@ -62,6 +72,34 @@ export function TopBar({
         {isBoardFocus ? boardLabel || 'Board' : 'Open House Planner'}
       </h1>
 
+      {isBoardFocus && (() => {
+        const viewers = presenceUsers.filter(u => u.boardId === boardId)
+        return viewers.length > 0 ? (
+          <div className="flex items-center gap-1 text-[11px] text-gray-500">
+            {viewers.map(u => (
+              <span key={u.userName} className="inline-flex items-center gap-0.5 rounded-full bg-green-50 border border-green-200 px-1.5 py-0.5 text-green-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                {u.userName}
+              </span>
+            ))}
+          </div>
+        ) : null
+      })()}
+
+      {totalBoards > 0 && (
+        <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
+          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${assignedBoards === totalBoards ? 'bg-green-500' : 'bg-blue-500'}`}
+              style={{ width: `${totalBoards === 0 ? 0 : Math.round((assignedBoards / totalBoards) * 100)}%` }}
+            />
+          </div>
+          <span className={`text-[11px] font-medium ${assignedBoards === totalBoards ? 'text-green-700' : 'text-gray-600'}`}>
+            {assignedBoards}/{totalBoards}
+          </span>
+        </div>
+      )}
+
       <div className="h-6 w-px bg-gray-200" />
 
       {connectionStatus !== 'connected' && (
@@ -93,6 +131,26 @@ export function TopBar({
       )}
 
       <div className="flex-1" />
+
+      {/* Undo/Redo */}
+      <div className="flex items-center gap-0.5">
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="p-1.5 rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default"
+          title="Undo (Ctrl+Z)"
+        >
+          <Undo2 className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="p-1.5 rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default"
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          <Redo2 className="w-4 h-4" />
+        </button>
+      </div>
 
       {/* Upload Photos */}
       <input

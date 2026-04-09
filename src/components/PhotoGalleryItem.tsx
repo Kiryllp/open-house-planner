@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { memo, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, Trash2 } from 'lucide-react'
+import { Loader2, MapPin, RefreshCw, Trash2 } from 'lucide-react'
 import type { Photo } from '@/lib/types'
 
 interface PhotoGalleryItemProps {
@@ -11,6 +11,7 @@ interface PhotoGalleryItemProps {
   onClick: () => void
   onDelete: () => void
   onToggleType: () => void
+  onPlaceOnMap?: () => void
   loading?: boolean
 }
 
@@ -20,6 +21,7 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
   onClick,
   onDelete,
   onToggleType,
+  onPlaceOnMap,
   loading = false,
 }: PhotoGalleryItemProps) {
   const isAssignedElsewhere = !!assignedBoardLabel
@@ -74,11 +76,12 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
 
         {/* Type badge */}
         <span
-          className={`absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full border border-white shadow-sm ${
+          className={`absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm ${
             photo.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'
           }`}
-          title={photo.type}
-        />
+        >
+          {photo.type === 'real' ? 'Real' : 'Concept'}
+        </span>
 
         {/* Metadata */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 px-2 pb-2 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
@@ -125,6 +128,16 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
         >
           <Trash2 className="w-3 h-3 text-red-500" />
         </button>
+        {onPlaceOnMap && photo.pin_x == null && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onPlaceOnMap() }}
+            disabled={loading}
+            className="h-5 w-5 rounded bg-white/90 shadow-sm flex items-center justify-center hover:bg-blue-50 transition-colors disabled:cursor-wait"
+            title="Place on map"
+          >
+            <MapPin className="w-3 h-3 text-blue-600" />
+          </button>
+        )}
       </div>
     </div>
   )

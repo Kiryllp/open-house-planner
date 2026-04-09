@@ -5,7 +5,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
 import { toast } from 'sonner'
 import { AppContext, type AppState, type AppActions } from '@/lib/store'
-import { useSupabaseData } from '@/lib/useSupabaseData'
+import { useSupabaseData, type UserPresence } from '@/lib/useSupabaseData'
 import {
   uploadPhoto,
   insertPhoto,
@@ -16,11 +16,12 @@ import {
   hardDeletePhotos,
 } from '@/lib/supabaseActions'
 import type { Photo, Board, AppMode } from '@/lib/types'
+import { useUndoRedo } from '@/lib/undoRedo'
 import { TopBar } from './TopBar'
 import { BoardFocusPanel } from './BoardFocusPanel'
 import { PhotoPin } from './PhotoPin'
 import { BoardPin } from './BoardPin'
-import { Upload, ImagePlus, Plus, Loader2 } from 'lucide-react'
+import { Upload, ImagePlus, Plus, Loader2, Camera, Lightbulb, MapPin, Eye, EyeOff } from 'lucide-react'
 
 interface MainScreenProps {
   userName: string
@@ -49,12 +50,15 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<'photo' | 'board' | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [showAllPhotos, setShowAllPhotos] = useState(false)
+  const [galleryTab, setGalleryTab] = useState<'potential' | 'all'>('potential')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'board' | 'photo'; id: string; label: string } | null>(null)
+
+  // Place photo on map mode
+  const [placingPhotoId, setPlacingPhotoId] = useState<string | null>(null)
 
   // Drag-over feedback
   const [dragOverCount, setDragOverCount] = useState(0)
@@ -66,6 +70,13 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting')
   const [panelBoardId, setPanelBoardId] = useState<string | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
+
+  // Map photo filter: which photo pins to show in overview mode
+  type MapPhotoFilter = 'none' | 'real' | 'concept' | 'all'
+  const [mapPhotoFilter, setMapPhotoFilter] = useState<MapPhotoFilter>('none')
+
+  // Presence
+  const [presenceUsers, setPresenceUsers] = useState<UserPresence[]>([])
 
   // Floor plan error
   const [floorplanError, setFloorplanError] = useState(false)
@@ -80,6 +91,16 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const handleJustFinishedRef = useRef(false)
   const lastDragPosRef = useRef<{ x: number; y: number } | null>(null)
   const lastConnectionStatusRef = useRef<ConnectionStatus>('connecting')
+  const dragAbortRef = useRef<AbortController | null>(null)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const photosRef = useRef(photos)
+  photosRef.current = photos
+  const boardsRef = useRef(boards)
+  boardsRef.current = boards
+
+  // Undo/redo
+  const { execute: pushUndo, undo, redo, canUndo, canRedo } = useUndoRedo()
 
   // Actions
   const select = useCallback((id: string | null, kind: 'photo' | 'board' | null) => {
@@ -97,14 +118,14 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   const addPhoto = useCallback((photo: Photo) => {
     setPhotos((prev) => {
-      if (prev.some((p) => p.id === photo.id)) return prev.map((p) => p.id === photo.id ? photo : p)
+      if (prev.some((p) => p.id === photo.id)) return prev
       return [...prev, photo]
     })
   }, [])
 
   const addBoard = useCallback((board: Board) => {
     setBoards((prev) => {
-      if (prev.some((b) => b.id === board.id)) return prev.map((b) => b.id === board.id ? board : b)
+      if (prev.some((b) => b.id === board.id)) return prev
       return [...prev, board]
     })
   }, [])
@@ -151,65 +172,142 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     if (!targetPhoto) return
 
     const boardLabel = boards.find((board) => board.id === boardId)?.label || 'board'
-    const photosToUnassign = photos.filter((photo) => photo.board_id === boardId && photo.id !== photoId && !photo.deleted_at)
+    const photosToUnassign = photos.filter((photo) =>
+      photo.board_id === boardId &&
+      photo.id !== photoId &&
+      !photo.deleted_at &&
+      photo.board_status === 'assigned' &&
+      photo.type === targetPhoto.type
+    )
     const affectedIds = Array.from(new Set([photoId, ...photosToUnassign.map((photo) => photo.id)]))
-    const rollbackBoardIds = new Map(affectedIds.map((id) => [id, photos.find((photo) => photo.id === id)?.board_id ?? null]))
+    const rollbackSnapshots = new Map(affectedIds.map((id) => {
+      const p = photos.find((photo) => photo.id === id)
+      return [id, { board_id: p?.board_id ?? null, board_status: p?.board_status ?? 'assigned' as const }]
+    }))
 
     updatePendingPhotoIds(affectedIds, true)
     setPhotos((prev) => prev.map((photo) => {
-      if (photosToUnassign.some((other) => other.id === photo.id)) return { ...photo, board_id: null }
-      if (photo.id === photoId) return { ...photo, board_id: boardId }
+      if (photosToUnassign.some((other) => other.id === photo.id)) return { ...photo, board_id: null, board_status: 'assigned' as const }
+      if (photo.id === photoId) return { ...photo, board_id: boardId, board_status: 'assigned' as const }
       return photo
     }))
 
     void Promise.all([
-      ...photosToUnassign.map((photo) => updatePhotoDb(photo.id, { board_id: null })),
-      updatePhotoDb(photoId, { board_id: boardId }),
+      ...photosToUnassign.map((photo) => updatePhotoDb(photo.id, { board_id: null, board_status: 'assigned' })),
+      updatePhotoDb(photoId, { board_id: boardId, board_status: 'assigned' }),
     ]).then(() => {
       toast.success(`Photo assigned to ${boardLabel}`)
+      // Capture snapshots for undo closure
+      const undoSnapshots = new Map(rollbackSnapshots)
+      pushUndo({
+        description: `Assigned photo to ${boardLabel}`,
+        undo: async () => {
+          // Optimistic: restore all affected photos to their previous state
+          setPhotos((prev) => prev.map((photo) => {
+            const snap = undoSnapshots.get(photo.id)
+            return snap ? { ...photo, board_id: snap.board_id, board_status: snap.board_status } : photo
+          }))
+          try {
+            await Promise.all(
+              Array.from(undoSnapshots.entries()).map(([id, snap]) =>
+                updatePhotoDb(id, { board_id: snap.board_id, board_status: snap.board_status })
+              )
+            )
+            toast.info(`Undone: Assigned photo to ${boardLabel}`)
+          } catch {
+            toast.error('Undo failed — could not save to database')
+          }
+        },
+        redo: async () => {
+          // Re-do the assignment
+          setPhotos((prev) => prev.map((photo) => {
+            if (photosToUnassign.some((other) => other.id === photo.id)) return { ...photo, board_id: null, board_status: 'assigned' as const }
+            if (photo.id === photoId) return { ...photo, board_id: boardId, board_status: 'assigned' as const }
+            return photo
+          }))
+          try {
+            await Promise.all([
+              ...photosToUnassign.map((photo) => updatePhotoDb(photo.id, { board_id: null, board_status: 'assigned' })),
+              updatePhotoDb(photoId, { board_id: boardId, board_status: 'assigned' }),
+            ])
+            toast.info(`Redone: Assigned photo to ${boardLabel}`)
+          } catch {
+            toast.error('Redo failed — could not save to database')
+          }
+        },
+      })
     }).catch(() => {
-      setPhotos((prev) => prev.map((photo) => rollbackBoardIds.has(photo.id)
-        ? { ...photo, board_id: rollbackBoardIds.get(photo.id) ?? null }
-        : photo
-      ))
+      setPhotos((prev) => prev.map((photo) => {
+        const snap = rollbackSnapshots.get(photo.id)
+        return snap ? { ...photo, board_id: snap.board_id, board_status: snap.board_status } : photo
+      }))
       toast.error('Failed to assign photo. Your local changes were rolled back.')
     }).finally(() => {
       updatePendingPhotoIds(affectedIds, false)
     })
-  }, [boards, photos, updatePendingPhotoIds])
+  }, [boards, photos, updatePendingPhotoIds, pushUndo])
 
   const unassignPhoto = useCallback((photoId: string) => {
     const photo = photos.find((item) => item.id === photoId && !item.deleted_at)
     if (!photo) return
     const previousBoardId = photo.board_id
+    const previousBoardStatus = photo.board_status
 
     updatePendingPhotoIds([photoId], true)
-    setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: null } : item))
+    setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: null, board_status: 'assigned' as const } : item))
 
-    void updatePhotoDb(photoId, { board_id: null }).then(() => {
+    void updatePhotoDb(photoId, { board_id: null, board_status: 'assigned' }).then(() => {
       toast.success('Photo removed from board')
+      const savedBoardId = previousBoardId
+      const savedBoardStatus = previousBoardStatus
+      pushUndo({
+        description: 'Removed photo from board',
+        undo: async () => {
+          setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: savedBoardId, board_status: savedBoardStatus } : item))
+          try {
+            await updatePhotoDb(photoId, { board_id: savedBoardId, board_status: savedBoardStatus })
+            toast.info('Undone: Removed photo from board')
+          } catch {
+            toast.error('Undo failed — could not save to database')
+          }
+        },
+        redo: async () => {
+          setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: null, board_status: 'assigned' as const } : item))
+          try {
+            await updatePhotoDb(photoId, { board_id: null, board_status: 'assigned' })
+            toast.info('Redone: Removed photo from board')
+          } catch {
+            toast.error('Redo failed — could not save to database')
+          }
+        },
+      })
     }).catch(() => {
-      setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: previousBoardId } : item))
+      setPhotos((prev) => prev.map((item) => item.id === photoId ? { ...item, board_id: previousBoardId, board_status: previousBoardStatus } : item))
       toast.error('Failed to remove photo from the board')
     }).finally(() => {
       updatePendingPhotoIds([photoId], false)
     })
-  }, [photos, updatePendingPhotoIds])
+  }, [photos, updatePendingPhotoIds, pushUndo])
 
-  const toggleShowAllPhotos = useCallback(() => {
-    setShowAllPhotos(prev => !prev)
+  const handleSetGalleryTab = useCallback((tab: 'potential' | 'all') => {
+    setGalleryTab(tab)
   }, [])
 
   // Load data & realtime
+  const focusedBoardId = mode.kind === 'board-focus' ? mode.boardId : null
+
   useSupabaseData({
     setPhotos, setBoards,
     updatePhoto, updateBoard,
     addPhoto, addBoard,
     removePhoto, removeBoard,
     draggingId,
+    userName,
+    currentBoardId: focusedBoardId,
     onLoaded: () => setLoading(false),
     onError: (msg) => { setLoading(false); setLoadError(msg) },
     onConnectionStatusChange: setConnectionStatus,
+    onPresenceChange: setPresenceUsers,
   })
 
   // Coordinate conversion
@@ -234,7 +332,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
 
   // Upload photos — in board focus mode, only the FIRST photo is auto-assigned (1 per board)
   async function doUploadPhotos(files: File[], pinX: number | null, pinY: number | null) {
-    const boardId = mode.kind === 'board-focus' ? mode.boardId : null
+    const currentMode = modeRef.current
+    const boardId = currentMode.kind === 'board-focus' ? currentMode.boardId : null
     const newUploads = files.map((file) => ({ id: crypto.randomUUID(), name: file.name, size: file.size, done: false }))
     setUploading(prev => [...prev, ...newUploads])
 
@@ -245,7 +344,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         const url = await uploadPhoto(files[i])
         const assignToBoard = boardId && !firstAssigned ? boardId : null
         if (assignToBoard) {
-          const previousBoardPhotos = photos.filter((photo) => photo.board_id === boardId && !photo.deleted_at)
+          const previousBoardPhotos = photosRef.current.filter((photo) => photo.board_id === boardId && !photo.deleted_at)
           previousBoardPhotos.forEach((photo) => {
             updatePhoto(photo.id, { board_id: null })
           })
@@ -262,6 +361,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           cone_length: 120,
           notes: '',
           board_id: assignToBoard,
+          board_status: assignToBoard ? 'assigned' : 'assigned',
           deleted_at: null,
           created_by_name: userName,
           visible: true,
@@ -273,6 +373,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         successfulUploads += 1
         setUploading(prev => prev.map((u) => u.id === newUploads[i].id ? { ...u, done: true } : u))
       } catch (err) {
+        console.error('Upload failed for', files[i].name, err)
         toast.error(getUploadErrorMessage(err, files[i].name, pinX, pinY))
         setUploading(prev => prev.filter(u => u.id !== newUploads[i].id))
       }
@@ -290,7 +391,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       }
     }
 
-    setTimeout(() => setUploading(prev => prev.filter(u => !u.done)), 2000)
+    const batchIds = new Set(newUploads.map(u => u.id))
+    setTimeout(() => setUploading(prev => prev.filter(u => !batchIds.has(u.id) || !u.done)), 2000)
   }
 
   // Drop handler
@@ -395,8 +497,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
 
     function onMouseUp() {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+      dragAbortRef.current?.abort()
+      dragAbortRef.current = null
 
       if (isDraggingRef.current && lastDragPosRef.current) {
         const { x, y } = lastDragPosRef.current
@@ -414,8 +516,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       setTimeout(() => { isDraggingRef.current = false }, 0)
     }
 
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    dragAbortRef.current?.abort()
+    const ac = new AbortController()
+    dragAbortRef.current = ac
+    window.addEventListener('mousemove', onMouseMove, { signal: ac.signal })
+    window.addEventListener('mouseup', onMouseUp, { signal: ac.signal })
   }
 
   function handleCanvasClick(e: React.MouseEvent) {
@@ -423,6 +528,22 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     if (target.closest('[data-pin-id]')) return
     if (target.closest('.handle-element')) return
     if (handleJustFinishedRef.current) return
+
+    // Place photo on map mode
+    if (placingPhotoId) {
+      const pos = screenToPercent(e.clientX, e.clientY)
+      if (pos) {
+        updatePhoto(placingPhotoId, { pin_x: pos.x, pin_y: pos.y })
+        void updatePhotoDb(placingPhotoId, { pin_x: pos.x, pin_y: pos.y }).then(() => {
+          toast.success('Photo placed on map')
+        }).catch(() => {
+          updatePhoto(placingPhotoId, { pin_x: null, pin_y: null })
+          toast.error('Failed to place photo on map')
+        })
+      }
+      setPlacingPhotoId(null)
+      return
+    }
 
     // In any mode, clicking empty canvas deselects
     select(null, null)
@@ -435,7 +556,19 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
 
+      if ((e.key === 'z') && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        if (e.shiftKey) {
+          redo()
+        } else {
+          undo()
+        }
+        return
+      }
+
       if (e.key === 'Escape') {
+        // Cancel placing mode first
+        if (placingPhotoId) { setPlacingPhotoId(null); toast.info('Cancelled placing photo'); return }
         // Close delete confirmation first
         if (deleteConfirm) { setDeleteConfirm(null); return }
         // Exit board focus
@@ -454,7 +587,12 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [mode, exitBoardFocus, selectedId, selectedKind, photos, deleteConfirm, select])
+  }, [mode, exitBoardFocus, selectedId, selectedKind, photos, deleteConfirm, select, undo, redo, placingPhotoId])
+
+  // Cleanup drag listeners on unmount
+  useEffect(() => {
+    return () => { dragAbortRef.current?.abort() }
+  }, [])
 
   async function handleAddBoard() {
     const img = floorplanRef.current
@@ -500,7 +638,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const boardPhotos = photos.filter(p => p.board_id === id && !p.deleted_at)
       for (const p of boardPhotos) {
         updatePhoto(p.id, { board_id: null })
-        updatePhotoDb(p.id, { board_id: null }).catch(() => {})
+        updatePhotoDb(p.id, { board_id: null }).catch((err) => {
+          console.error('Failed to unassign photo during board delete:', p.id, err)
+          toast.error('Failed to unassign a photo from the board')
+        })
       }
       exitBoardFocus()
       try {
@@ -535,15 +676,75 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     const newType = photo.type === 'real' ? 'concept' : 'real'
     updatePendingPhotoIds([photoId], true)
     updatePhoto(photoId, { type: newType })
+    const oldType = photo.type
     void updatePhotoDb(photoId, { type: newType }).then(() => {
       toast.success(`Photo marked as ${newType}`)
+      pushUndo({
+        description: `Changed photo to ${newType}`,
+        undo: async () => {
+          updatePhoto(photoId, { type: oldType })
+          try {
+            await updatePhotoDb(photoId, { type: oldType })
+            toast.info(`Undone: Changed photo to ${newType}`)
+          } catch {
+            toast.error('Undo failed — could not save to database')
+          }
+        },
+        redo: async () => {
+          updatePhoto(photoId, { type: newType })
+          try {
+            await updatePhotoDb(photoId, { type: newType })
+            toast.info(`Redone: Changed photo to ${newType}`)
+          } catch {
+            toast.error('Redo failed — could not save to database')
+          }
+        },
+      })
     }).catch(() => {
       updatePhoto(photoId, { type: photo.type })
       toast.error('Failed to update photo type')
     }).finally(() => {
       updatePendingPhotoIds([photoId], false)
     })
-  }, [photos, updatePhoto, updatePendingPhotoIds])
+  }, [photos, updatePhoto, updatePendingPhotoIds, pushUndo])
+
+  const markPhotoAsPotential = useCallback((photoId: string, boardId: string) => {
+    const photo = photos.find(p => p.id === photoId && !p.deleted_at)
+    if (!photo) return
+    const previousBoardId = photo.board_id
+    const previousBoardStatus = photo.board_status
+
+    updatePendingPhotoIds([photoId], true)
+    setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, board_id: boardId, board_status: 'potential' as const } : p))
+
+    void updatePhotoDb(photoId, { board_id: boardId, board_status: 'potential' }).then(() => {
+      toast.success('Photo saved as potential')
+    }).catch(() => {
+      setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, board_id: previousBoardId, board_status: previousBoardStatus } : p))
+      toast.error('Failed to save photo as potential')
+    }).finally(() => {
+      updatePendingPhotoIds([photoId], false)
+    })
+  }, [photos, updatePendingPhotoIds])
+
+  const removeFromPotential = useCallback((photoId: string) => {
+    const photo = photos.find(p => p.id === photoId && !p.deleted_at)
+    if (!photo) return
+    const previousBoardId = photo.board_id
+    const previousBoardStatus = photo.board_status
+
+    updatePendingPhotoIds([photoId], true)
+    setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, board_id: null, board_status: 'assigned' as const } : p))
+
+    void updatePhotoDb(photoId, { board_id: null, board_status: 'assigned' }).then(() => {
+      toast.success('Photo removed from potential')
+    }).catch(() => {
+      setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, board_id: previousBoardId, board_status: previousBoardStatus } : p))
+      toast.error('Failed to remove photo from potential')
+    }).finally(() => {
+      updatePendingPhotoIds([photoId], false)
+    })
+  }, [photos, updatePendingPhotoIds])
 
   // Cone handle drag
   const lastConeRef = useRef<{ direction_deg: number; cone_length: number } | null>(null)
@@ -584,8 +785,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     }
 
     function onMouseUp() {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+      dragAbortRef.current?.abort()
+      dragAbortRef.current = null
       if (lastConeRef.current) {
         updatePhotoDb(photoId, lastConeRef.current).catch(() => toast.error('Failed to save cone'))
       }
@@ -595,8 +796,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       setTimeout(() => { handleJustFinishedRef.current = false }, 50)
     }
 
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    dragAbortRef.current?.abort()
+    const ac = new AbortController()
+    dragAbortRef.current = ac
+    window.addEventListener('mousemove', onMouseMove, { signal: ac.signal })
+    window.addEventListener('mouseup', onMouseUp, { signal: ac.signal })
   }
 
   // Board rotate handle
@@ -626,8 +830,8 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       }
 
       function onMouseUp() {
-        window.removeEventListener('mousemove', onMouseMove)
-        window.removeEventListener('mouseup', onMouseUp)
+        dragAbortRef.current?.abort()
+        dragAbortRef.current = null
         if (lastBoardAngleRef.current !== null) {
           updateBoardDb(boardId, { facing_deg: lastBoardAngleRef.current }).catch(() => toast.error('Failed to save rotation'))
         }
@@ -637,8 +841,11 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
         setTimeout(() => { handleJustFinishedRef.current = false }, 50)
       }
 
-      window.addEventListener('mousemove', onMouseMove)
-      window.addEventListener('mouseup', onMouseUp)
+      dragAbortRef.current?.abort()
+      const ac = new AbortController()
+      dragAbortRef.current = ac
+      window.addEventListener('mousemove', onMouseMove, { signal: ac.signal })
+      window.addEventListener('mouseup', onMouseUp, { signal: ac.signal })
     }
   }
 
@@ -648,7 +855,6 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   const activeBoardIds = useMemo(() => new Set(activeBoards.map((board) => board.id)), [activeBoards])
   const pendingPhotoIdSet = useMemo(() => new Set(photoActionIds), [photoActionIds])
 
-  const focusedBoardId = mode.kind === 'board-focus' ? mode.boardId : null
   const focusedBoard = focusedBoardId ? activeBoards.find(b => b.id === focusedBoardId) ?? null : null
   const panelBoard = panelBoardId ? activeBoards.find((board) => board.id === panelBoardId) ?? null : null
 
@@ -696,65 +902,85 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     setBoardLabelDraft(null)
   }, [focusedBoard])
 
-  const { assignedPhotoByBoardId, canonicalAssignedPhotoIds } = useMemo(() => {
-    const byBoardId = new Map<string, Photo>()
+  const { assignedPhotoByBoardId, canonicalAssignedPhotoIds, potentialPhotosByBoardId } = useMemo(() => {
+    const byBoardId = new Map<string, Photo[]>()
     const canonicalIds = new Set<string>()
-    const photosByBoard = new Map<string, Photo[]>()
+    const potentialByBoard = new Map<string, Photo[]>()
 
     activePhotos.forEach((photo) => {
       if (!photo.board_id || !activeBoardIds.has(photo.board_id)) return
-      const bucket = photosByBoard.get(photo.board_id) ?? []
+
+      if (photo.board_status === 'potential') {
+        const bucket = potentialByBoard.get(photo.board_id) ?? []
+        bucket.push(photo)
+        potentialByBoard.set(photo.board_id, bucket)
+        return
+      }
+
+      const bucket = byBoardId.get(photo.board_id) ?? []
       bucket.push(photo)
-      photosByBoard.set(photo.board_id, bucket)
+      byBoardId.set(photo.board_id, bucket)
     })
 
-    photosByBoard.forEach((bucket, boardId) => {
-      const [canonicalPhoto] = [...bucket].sort((a, b) =>
+    byBoardId.forEach((bucket, boardId) => {
+      const sorted = [...bucket].sort((a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       )
-
-      if (!canonicalPhoto) return
-      byBoardId.set(boardId, canonicalPhoto)
-      canonicalIds.add(canonicalPhoto.id)
+      byBoardId.set(boardId, sorted)
+      sorted.forEach((p) => canonicalIds.add(p.id))
     })
 
-    return { assignedPhotoByBoardId: byBoardId, canonicalAssignedPhotoIds: canonicalIds }
+    return { assignedPhotoByBoardId: byBoardId, canonicalAssignedPhotoIds: canonicalIds, potentialPhotosByBoardId: potentialByBoard }
   }, [activeBoardIds, activePhotos])
 
-  const focusedAssignedPhoto = focusedBoardId ? assignedPhotoByBoardId.get(focusedBoardId) ?? null : null
+  const focusedAssignedPhotos: Photo[] = focusedBoardId ? assignedPhotoByBoardId.get(focusedBoardId) ?? [] : []
 
-  // In board focus mode: only show photo pins assigned to this board that have pin coordinates
-  const visiblePhotoPins = useMemo(() =>
-    focusedAssignedPhoto && focusedAssignedPhoto.pin_x != null && focusedAssignedPhoto.pin_y != null
-      ? [focusedAssignedPhoto]
-      : [],
-    [focusedAssignedPhoto]
-  )
+  // Photo pins visible on the map:
+  // Overview: filtered by mapPhotoFilter toggle
+  // Board focus: the assigned photo (if pinned) for the focused board
+  const visiblePhotoPins = useMemo(() => {
+    if (mode.kind === 'board-focus') {
+      return focusedAssignedPhotos.filter(p => p.pin_x != null && p.pin_y != null)
+    }
+    if (mapPhotoFilter === 'none') return []
+    return activePhotos.filter(p => {
+      if (p.pin_x == null || p.pin_y == null) return false
+      if (mapPhotoFilter === 'all') return true
+      return p.type === mapPhotoFilter
+    })
+  }, [mode.kind, focusedAssignedPhotos, activePhotos, mapPhotoFilter])
 
   const selectedPhoto = selectedKind === 'photo' ? photos.find((p) => p.id === selectedId) : null
   const selectedBoard = selectedKind === 'board' ? boards.find((b) => b.id === selectedId) : null
 
   const boardPhotoUrls = useMemo(() => {
     const map = new Map<string, string>()
-    assignedPhotoByBoardId.forEach((photo, boardId) => {
-      map.set(boardId, photo.file_url)
+    assignedPhotoByBoardId.forEach((photos, boardId) => {
+      if (photos.length > 0) map.set(boardId, photos[0].file_url)
     })
     return map
   }, [assignedPhotoByBoardId])
 
-  const panelAssignedPhoto = panelBoard ? assignedPhotoByBoardId.get(panelBoard.id) ?? null : null
+  const panelAssignedPhotos: Photo[] = panelBoard ? assignedPhotoByBoardId.get(panelBoard.id) ?? [] : []
+  const panelPotentialPhotos: Photo[] = panelBoard ? potentialPhotosByBoardId.get(panelBoard.id) ?? [] : []
+  const panelAssignedPhotoIds = useMemo(() => new Set(panelAssignedPhotos.map(p => p.id)), [panelAssignedPhotos])
 
   const panelGalleryPhotos = useMemo(() => {
     if (!panelBoard) return []
 
+    if (galleryTab === 'potential') {
+      return panelPotentialPhotos
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    }
+
     return activePhotos
       .filter((photo) => {
-        if (photo.id === panelAssignedPhoto?.id) return false
-        if (showAllPhotos) return true
-        return !canonicalAssignedPhotoIds.has(photo.id)
+        if (panelAssignedPhotoIds.has(photo.id)) return false
+        if (photo.board_id === panelBoard.id && photo.board_status === 'potential') return false
+        return true
       })
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  }, [activePhotos, canonicalAssignedPhotoIds, panelAssignedPhoto?.id, panelBoard, showAllPhotos])
+  }, [activePhotos, panelAssignedPhotoIds, panelBoard, panelPotentialPhotos, galleryTab])
 
   const isEmpty = !loading && !loadError && activePhotos.length === 0 && activeBoards.length === 0
 
@@ -817,7 +1043,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
   // Context value — memoized to prevent unnecessary re-renders
   const ctx = useMemo<AppState & AppActions>(() => ({
     photos, boards, mode,
-    selectedId, selectedKind, draggingId, showAllPhotos, userName,
+    selectedId, selectedKind, draggingId, galleryTab, userName,
     setPhotos, setBoards,
     select, setDraggingId,
     updatePhoto, updateBoard,
@@ -825,10 +1051,10 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     removePhoto, removeBoard,
     enterBoardFocus, exitBoardFocus,
     assignPhotoToBoard, unassignPhoto,
-    toggleShowAllPhotos,
-  }), [photos, boards, mode, selectedId, selectedKind, draggingId, showAllPhotos, userName,
+    setGalleryTab: handleSetGalleryTab,
+  }), [photos, boards, mode, selectedId, selectedKind, draggingId, galleryTab, userName,
     select, setDraggingId, updatePhoto, updateBoard, addPhoto, addBoard, removePhoto, removeBoard,
-    enterBoardFocus, exitBoardFocus, assignPhotoToBoard, unassignPhoto, toggleShowAllPhotos])
+    enterBoardFocus, exitBoardFocus, assignPhotoToBoard, unassignPhoto, handleSetGalleryTab])
 
   const floorplanUrl = process.env.NEXT_PUBLIC_FLOORPLAN_URL || ''
 
@@ -844,6 +1070,14 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
           mode={mode}
           boardLabel={boardLabelDraft ?? focusedBoard?.label}
           connectionStatus={connectionStatus}
+          totalBoards={activeBoards.length}
+          assignedBoards={assignedPhotoByBoardId.size}
+          presenceUsers={presenceUsers}
+          boardId={focusedBoardId}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
         />
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
@@ -871,7 +1105,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   ref={canvasRef}
                   className="relative"
                   onClick={handleCanvasClick}
-                  style={{ pointerEvents: 'auto' }}
+                  style={{ pointerEvents: 'auto', cursor: placingPhotoId ? 'crosshair' : undefined }}
                 >
                   {floorplanUrl && !floorplanError ? (
                     <img
@@ -894,7 +1128,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                     </div>
                   )}
 
-                  {/* Photo pins (only in board focus mode) */}
+                  {/* Photo pins (overview: all pinned, board focus: assigned photo) */}
                   {visiblePhotoPins.map((photo) => (
                     <PhotoPin
                       key={photo.id}
@@ -912,7 +1146,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       board={board}
                       selected={focusedBoardId === board.id}
                       focused={focusedBoardId ? focusedBoardId === board.id : true}
-                      showCone={focusedBoardId === board.id}
+                      showCone={focusedBoardId ? focusedBoardId === board.id : true}
                       assignedPhotoUrl={boardPhotoUrls.get(board.id) || null}
                       onClick={(e) => handlePinClick(board.id, 'board', e)}
                       onMouseDown={(e) => handlePinMouseDown(board.id, 'board', e)}
@@ -943,6 +1177,56 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                 <div className="rounded-full border border-gray-200 bg-white/92 px-3 py-1.5 text-xs text-gray-600 shadow-sm backdrop-blur">
                   Click another board to switch. Use Back or Esc to return.
                 </div>
+              </div>
+            )}
+
+            {/* Placing photo on map indicator */}
+            {placingPhotoId && (
+              <div className="absolute inset-0 z-30 pointer-events-none">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-auto">
+                  <div className="flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 shadow-lg">
+                    <MapPin className="h-4 w-4 animate-bounce" />
+                    Click on the map to place this photo
+                    <button onClick={() => setPlacingPhotoId(null)} className="ml-1 rounded-full bg-blue-200 px-2 py-0.5 text-xs hover:bg-blue-300 transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <div className="absolute inset-0 cursor-crosshair" style={{ pointerEvents: 'none' }} />
+              </div>
+            )}
+
+            {/* Photo pin toggles — overview mode only */}
+            {mode.kind === 'overview' && activePhotos.some(p => p.pin_x != null) && (
+              <div className="absolute bottom-4 right-4 z-20 flex items-center gap-1 rounded-lg border border-gray-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+                <span className="px-1.5 text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                  <MapPin className="inline h-3 w-3 -mt-0.5" /> Photos
+                </span>
+                {([
+                  ['none', 'Off', EyeOff],
+                  ['real', 'Real', Camera],
+                  ['concept', 'Concept', Lightbulb],
+                  ['all', 'All', Eye],
+                ] as const).map(([value, label, Icon]) => (
+                  <button
+                    key={value}
+                    onClick={() => setMapPhotoFilter(value as MapPhotoFilter)}
+                    className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                      mapPhotoFilter === value
+                        ? value === 'real'
+                          ? 'bg-blue-100 text-blue-700'
+                          : value === 'concept'
+                            ? 'bg-purple-100 text-purple-700'
+                            : value === 'all'
+                              ? 'bg-gray-800 text-white'
+                              : 'bg-gray-100 text-gray-600'
+                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                    }`}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {label}
+                  </button>
+                ))}
               </div>
             )}
 
@@ -1033,21 +1317,23 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                   board={panelBoard}
                   photos={photos}
                   boards={activeBoards}
-                  assignedPhoto={panelAssignedPhoto}
+                  assignedPhotos={panelAssignedPhotos}
+                  potentialPhotos={panelPotentialPhotos}
                   galleryPhotos={panelGalleryPhotos}
                   canonicalAssignedPhotoIds={canonicalAssignedPhotoIds}
                   pendingPhotoIds={pendingPhotoIdSet}
                   uploading={uploading}
-                  showAllPhotos={showAllPhotos}
-                  onToggleShowAll={toggleShowAllPhotos}
+                  galleryTab={galleryTab}
+                  onSetGalleryTab={handleSetGalleryTab}
                   onAssignPhoto={(photoId) => assignPhotoToBoard(photoId, panelBoard.id)}
-                  onUnassignPhoto={() => {
-                    if (panelAssignedPhoto) unassignPhoto(panelAssignedPhoto.id)
-                  }}
+                  onUnassignPhoto={(photoId) => unassignPhoto(photoId)}
+                  onMarkPotential={(photoId) => markPhotoAsPotential(photoId, panelBoard.id)}
+                  onRemoveFromPotential={removeFromPotential}
                   onDeletePhoto={deletePhoto}
                   onTogglePhotoType={togglePhotoType}
                   onUploadPhotos={handleUploadPhotos}
                   onDeleteBoard={requestDeleteBoard}
+                  onPlaceOnMap={(photoId) => setPlacingPhotoId(photoId)}
                   onBack={exitBoardFocus}
                   onLabelDraftChange={setBoardLabelDraft}
                   updateBoard={updateBoard}

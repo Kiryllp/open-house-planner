@@ -48,7 +48,7 @@ export const BoardPin = memo(function BoardPin({
   return (
     <div
       className={`absolute group select-none transition-opacity duration-200 ${
-        focused ? 'opacity-100' : 'opacity-45 hover:opacity-95'
+        focused ? 'opacity-100' : 'opacity-45 hover:opacity-95 cursor-pointer'
       }`}
       style={{
         left: `${board.pin_x}%`,
@@ -146,7 +146,7 @@ export const BoardPin = memo(function BoardPin({
                   : '0 1px 3px rgba(0,0,0,0.2)',
               }}
             >
-              <div className="absolute -inset-2 rounded-lg border border-dashed border-amber-300/90 bg-amber-100/35" />
+              <div className="absolute -inset-2 rounded-lg border-2 border-dashed border-amber-400 bg-amber-100/50 animate-pulse" />
             </div>
           )}
         </div>

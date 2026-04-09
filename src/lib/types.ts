@@ -22,6 +22,7 @@ export interface Photo {
   notes: string
   color: string | null
   board_id: string | null
+  board_status: 'assigned' | 'potential'
   deleted_at: string | null
   created_at: string
   created_by_name: string | null

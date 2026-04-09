@@ -1,11 +1,13 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowLeft, Camera, Expand, ImagePlus, Lightbulb, Loader2, PencilLine, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateBoardDb } from '@/lib/supabaseActions'
 import { PhotoGalleryItem } from './PhotoGalleryItem'
+import { ComparisonSlider } from './ComparisonSlider'
 import type { Photo, Board } from '@/lib/types'
 
 interface UploadProgressItem {
@@ -19,19 +21,23 @@ interface BoardFocusPanelProps {
   board: Board
   photos: Photo[]
   boards: Board[]
-  assignedPhoto: Photo | null
+  assignedPhotos: Photo[]
+  potentialPhotos: Photo[]
   galleryPhotos: Photo[]
   canonicalAssignedPhotoIds: Set<string>
   pendingPhotoIds: Set<string>
   uploading: UploadProgressItem[]
-  showAllPhotos: boolean
-  onToggleShowAll: () => void
+  galleryTab: 'potential' | 'all'
+  onSetGalleryTab: (tab: 'potential' | 'all') => void
   onAssignPhoto: (photoId: string) => void
-  onUnassignPhoto: () => void
+  onUnassignPhoto: (photoId: string) => void
+  onMarkPotential: (photoId: string) => void
+  onRemoveFromPotential: (photoId: string) => void
   onDeletePhoto: (photoId: string) => void
   onTogglePhotoType: (photoId: string) => void
   onUploadPhotos: (files: FileList) => void
   onDeleteBoard: () => void
+  onPlaceOnMap: (photoId: string) => void
   onBack: () => void
   onLabelDraftChange: (label: string) => void
   updateBoard: (id: string, updates: Partial<Board>) => void
@@ -41,19 +47,23 @@ export function BoardFocusPanel({
   board,
   photos,
   boards,
-  assignedPhoto,
+  assignedPhotos,
+  potentialPhotos,
   galleryPhotos,
   canonicalAssignedPhotoIds,
   pendingPhotoIds,
   uploading,
-  showAllPhotos,
-  onToggleShowAll,
+  galleryTab,
+  onSetGalleryTab,
   onAssignPhoto,
   onUnassignPhoto,
+  onMarkPotential,
+  onRemoveFromPotential,
   onDeletePhoto,
   onTogglePhotoType,
   onUploadPhotos,
   onDeleteBoard,
+  onPlaceOnMap,
   onBack,
   onLabelDraftChange,
   updateBoard,
@@ -71,7 +81,7 @@ export function BoardFocusPanel({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollTopRef.current
     }
-  }, [assignedPhoto?.id, galleryPhotos])
+  }, [assignedPhotos, galleryPhotos])
 
   function saveLabel() {
     const trimmed = draftLabel.trim()
@@ -99,16 +109,9 @@ export function BoardFocusPanel({
     onLabelDraftChange(board.label)
   }
 
-  const pairedPhoto = useMemo(() => {
-    if (!assignedPhoto) return null
-
-    return assignedPhoto.paired_photo_id
-      ? photos.find((p) => p.id === assignedPhoto.paired_photo_id && !p.deleted_at) ?? null
-      : photos.find((p) => p.paired_photo_id === assignedPhoto.id && !p.deleted_at) ?? null
-  }, [assignedPhoto, photos])
-
-  const uploadProgress = uploading.length > 0
-    ? Math.round((uploading.filter((item) => item.done).length / uploading.length) * 100)
+  const uploadItems = uploading ?? []
+  const uploadProgress = uploadItems.length > 0
+    ? Math.round((uploadItems.filter((item) => item.done).length / uploadItems.length) * 100)
     : 0
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -217,55 +220,86 @@ export function BoardFocusPanel({
         <div
           ref={scrollRef}
           onScroll={(e) => { scrollTopRef.current = e.currentTarget.scrollTop }}
-          className="flex-1 overflow-y-auto"
+          className="flex-1 overflow-y-auto scroll-fade"
+          style={{ maskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 24px), transparent 100%)' }}
         >
           <div className="p-4">
-            {assignedPhoto ? (
+            {assignedPhotos.length === 2 && assignedPhotos[0].type !== assignedPhotos[1].type ? (
               <div>
-                {pairedPhoto ? (
-                  <div className="flex gap-2">
-                    <div className="flex-1 min-w-0">
-                      {renderPreview(assignedPhoto, 'Assigned photo')}
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${assignedPhoto.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'}`} />
-                        <span className="text-[10px] text-gray-500">{assignedPhoto.type}</span>
+                {(() => {
+                  const realPhoto = assignedPhotos.find((p) => p.type === 'real')!
+                  const conceptPhoto = assignedPhotos.find((p) => p.type === 'concept')!
+                  return (
+                    <ComparisonSlider
+                      leftPhoto={realPhoto}
+                      rightPhoto={conceptPhoto}
+                      onExpand={(photo) => setLightboxPhoto(photo)}
+                    />
+                  )
+                })()}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  {assignedPhotos.map((photo) => (
+                    <button
+                      key={photo.id}
+                      onClick={() => onUnassignPhoto(photo.id)}
+                      disabled={pendingPhotoIds.has(photo.id)}
+                      className="text-[10px] text-gray-400 transition-colors hover:text-red-500 disabled:cursor-wait"
+                    >
+                      {pendingPhotoIds.has(photo.id) ? '...' : `Remove ${photo.type}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : assignedPhotos.length === 2 ? (
+              <div>
+                <div className="flex gap-2">
+                  {assignedPhotos.map((photo) => (
+                    <div key={photo.id} className="flex-1 min-w-0">
+                      {renderPreview(photo, `Assigned ${photo.type} photo`)}
+                      <div className="flex items-center justify-between gap-1 mt-1">
+                        <div className="flex items-center gap-1">
+                          <span className={`w-2 h-2 rounded-full ${photo.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'}`} />
+                          <span className="text-[10px] text-gray-500">{photo.type}</span>
+                        </div>
+                        <button
+                          onClick={() => onUnassignPhoto(photo.id)}
+                          disabled={pendingPhotoIds.has(photo.id)}
+                          className="text-[10px] text-gray-400 transition-colors hover:text-red-500 disabled:cursor-wait"
+                        >
+                          {pendingPhotoIds.has(photo.id) ? '...' : 'Remove'}
+                        </button>
                       </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      {renderPreview(pairedPhoto, 'Paired comparison photo')}
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${pairedPhoto.type === 'real' ? 'bg-blue-500' : 'bg-purple-500'}`} />
-                        <span className="text-[10px] text-gray-500">{pairedPhoto.type}</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  renderPreview(assignedPhoto, 'Assigned photo')
-                )}
+                  ))}
+                </div>
+              </div>
+            ) : assignedPhotos.length === 1 ? (
+              <div>
+                {renderPreview(assignedPhotos[0], 'Assigned photo')}
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <button
-                    onClick={() => onTogglePhotoType(assignedPhoto.id)}
-                    disabled={pendingPhotoIds.has(assignedPhoto.id)}
+                    onClick={() => onTogglePhotoType(assignedPhotos[0].id)}
+                    disabled={pendingPhotoIds.has(assignedPhotos[0].id)}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:cursor-wait ${
-                      assignedPhoto.type === 'real'
+                      assignedPhotos[0].type === 'real'
                         ? 'bg-blue-50 text-blue-600 hover:bg-blue-100'
                         : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
                     }`}
                     title="Click to toggle type"
                   >
-                    {pendingPhotoIds.has(assignedPhoto.id)
+                    {pendingPhotoIds.has(assignedPhotos[0].id)
                       ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : assignedPhoto.type === 'real'
+                      : assignedPhotos[0].type === 'real'
                         ? <Camera className="w-3 h-3" />
                         : <Lightbulb className="w-3 h-3" />}
-                    {assignedPhoto.type}
+                    {assignedPhotos[0].type}
                   </button>
                   <button
-                    onClick={onUnassignPhoto}
-                    disabled={pendingPhotoIds.has(assignedPhoto.id)}
+                    onClick={() => onUnassignPhoto(assignedPhotos[0].id)}
+                    disabled={pendingPhotoIds.has(assignedPhotos[0].id)}
                     className="text-[10px] text-gray-400 transition-colors hover:text-red-500 disabled:cursor-wait"
                   >
-                    {pendingPhotoIds.has(assignedPhoto.id) ? 'Updating…' : 'Remove from board'}
+                    {pendingPhotoIds.has(assignedPhotos[0].id) ? 'Updating...' : 'Remove from board'}
                   </button>
                 </div>
               </div>
@@ -285,31 +319,43 @@ export function BoardFocusPanel({
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                 Photos ({galleryPhotos.length})
               </span>
-              <button
-                onClick={onToggleShowAll}
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                  showAllPhotos
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-              >
-                {showAllPhotos ? 'All Photos' : 'Unassigned Only'}
-              </button>
+              <div className="flex rounded-full bg-gray-100 p-0.5">
+                <button
+                  onClick={() => onSetGalleryTab('potential')}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    galleryTab === 'potential'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Potential{potentialPhotos.length > 0 ? ` (${potentialPhotos.length})` : ''}
+                </button>
+                <button
+                  onClick={() => onSetGalleryTab('all')}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    galleryTab === 'all'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  All
+                </button>
+              </div>
             </div>
 
             {galleryPhotos.length === 0 ? (
               <div className="py-6 text-center">
                 <p className="text-xs text-gray-400">
-                  {showAllPhotos
-                    ? photos.length > 0 ? 'No other photos are available right now' : 'No photos uploaded yet'
-                    : 'All available photos are already assigned'}
+                  {galleryTab === 'potential'
+                    ? 'No potential photos saved for this board yet'
+                    : photos.length > 0 ? 'No other photos are available right now' : 'No photos uploaded yet'}
                 </p>
-                {!showAllPhotos && photos.some((p) => !p.deleted_at && canonicalAssignedPhotoIds.has(p.id)) && (
+                {galleryTab === 'potential' && (
                   <button
-                    onClick={onToggleShowAll}
+                    onClick={() => onSetGalleryTab('all')}
                     className="mt-1 text-xs text-blue-600 hover:text-blue-800"
                   >
-                    Show all photos
+                    Browse all photos
                   </button>
                 )}
               </div>
@@ -321,15 +367,47 @@ export function BoardFocusPanel({
                     : null
 
                   return (
-                    <PhotoGalleryItem
-                      key={photo.id}
-                      photo={photo}
-                      assignedBoardLabel={otherBoard?.label}
-                      loading={pendingPhotoIds.has(photo.id)}
-                      onClick={() => onAssignPhoto(photo.id)}
-                      onDelete={() => onDeletePhoto(photo.id)}
-                      onToggleType={() => onTogglePhotoType(photo.id)}
-                    />
+                    <div key={photo.id} className="relative">
+                      <PhotoGalleryItem
+                        photo={photo}
+                        assignedBoardLabel={otherBoard?.label}
+                        loading={pendingPhotoIds.has(photo.id)}
+                        onClick={() => onAssignPhoto(photo.id)}
+                        onDelete={() => onDeletePhoto(photo.id)}
+                        onToggleType={() => onTogglePhotoType(photo.id)}
+                        onPlaceOnMap={photo.pin_x == null ? () => onPlaceOnMap(photo.id) : undefined}
+                      />
+                      {galleryTab === 'all' && photo.board_status !== 'potential' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onMarkPotential(photo.id) }}
+                          disabled={pendingPhotoIds.has(photo.id)}
+                          className="absolute bottom-1 right-1 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 shadow-sm opacity-0 transition-opacity duration-150 hover:bg-amber-50 group-hover:opacity-100 [div:hover>&]:opacity-100 disabled:cursor-wait"
+                          title="Save as potential for this board"
+                        >
+                          Save as potential
+                        </button>
+                      )}
+                      {galleryTab === 'potential' && (
+                        <div className="absolute bottom-1 right-1 z-10 flex gap-0.5 opacity-0 transition-opacity duration-150 [div:hover>&]:opacity-100">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onAssignPhoto(photo.id) }}
+                            disabled={pendingPhotoIds.has(photo.id)}
+                            className="rounded bg-blue-500/90 px-1.5 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-blue-600 disabled:cursor-wait"
+                            title="Use this photo"
+                          >
+                            Use this
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onRemoveFromPotential(photo.id) }}
+                            disabled={pendingPhotoIds.has(photo.id)}
+                            className="rounded bg-white/90 px-1.5 py-0.5 text-[9px] font-medium text-gray-500 shadow-sm hover:bg-red-50 hover:text-red-600 disabled:cursor-wait"
+                            title="Remove from potential"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )
                 })}
               </div>
@@ -338,7 +416,7 @@ export function BoardFocusPanel({
         </div>
 
         <div className="shrink-0 border-t border-gray-200 bg-white/95 p-4 backdrop-blur">
-          {uploading.length > 0 && (
+          {uploadItems.length > 0 && (
             <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="mb-2 flex items-center justify-between text-xs font-semibold text-gray-600">
                 <span>Uploading photos</span>
@@ -348,7 +426,7 @@ export function BoardFocusPanel({
                 <div className="h-full rounded-full bg-blue-500 transition-all duration-200" style={{ width: `${uploadProgress}%` }} />
               </div>
               <div className="mt-2 space-y-1">
-                {uploading.map((item) => (
+                {uploadItems.map((item) => (
                   <div key={item.id} className="flex items-center gap-2 text-[11px] text-gray-500">
                     {item.done ? <span className="text-green-500">&#10003;</span> : <Loader2 className="h-3 w-3 animate-spin text-blue-500" />}
                     <span className="truncate">{item.name}</span>
@@ -377,7 +455,7 @@ export function BoardFocusPanel({
         </div>
       </div>
 
-      {lightboxPhoto && (
+      {lightboxPhoto && createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setLightboxPhoto(null)}>
           <div className="relative max-h-full max-w-[95vw]" onClick={(e) => e.stopPropagation()}>
             <button
@@ -401,7 +479,8 @@ export function BoardFocusPanel({
               />
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )

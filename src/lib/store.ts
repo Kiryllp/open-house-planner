@@ -10,7 +10,7 @@ export interface AppState {
   selectedId: string | null
   selectedKind: 'photo' | 'board' | null
   draggingId: string | null
-  showAllPhotos: boolean
+  galleryTab: 'potential' | 'all'
   userName: string
 }
 
@@ -29,7 +29,7 @@ export interface AppActions {
   exitBoardFocus: () => void
   assignPhotoToBoard: (photoId: string, boardId: string) => void
   unassignPhoto: (photoId: string) => void
-  toggleShowAllPhotos: () => void
+  setGalleryTab: (tab: 'potential' | 'all') => void
 }
 
 export const AppContext = createContext<(AppState & AppActions) | null>(null)
