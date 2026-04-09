@@ -2,13 +2,14 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { memo, useMemo, useState } from 'react'
-import { Loader2, MapPin, RefreshCw, Trash2 } from 'lucide-react'
+import { Check, Loader2, MapPin, RefreshCw, Trash2 } from 'lucide-react'
 import type { Photo } from '@/lib/types'
 
 interface PhotoGalleryItemProps {
   photo: Photo
   assignedBoardLabel?: string
   onClick: () => void
+  onAssign?: () => void
   onDelete: () => void
   onToggleType: () => void
   onPlaceOnMap?: () => void
@@ -19,6 +20,7 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
   photo,
   assignedBoardLabel,
   onClick,
+  onAssign,
   onDelete,
   onToggleType,
   onPlaceOnMap,
@@ -45,7 +47,7 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
     <div className="relative group">
       <button
         onClick={onClick}
-        aria-label={`${isAssignedElsewhere ? `Reassign from ${assignedBoardLabel}` : 'Assign'} ${photo.type} photo`}
+        aria-label={`Preview ${photo.type} photo${isAssignedElsewhere ? ` (assigned to ${assignedBoardLabel})` : ''}`}
         disabled={loading}
         className={`w-full text-left rounded-lg overflow-hidden border transition-all ${
           isAssignedElsewhere
@@ -112,6 +114,16 @@ export const PhotoGalleryItem = memo(function PhotoGalleryItem({
 
       {/* Hover action buttons */}
       <div className="absolute top-1 left-1 flex gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+        {onAssign && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onAssign() }}
+            disabled={loading}
+            className="h-5 w-5 rounded bg-green-500 shadow-sm flex items-center justify-center hover:bg-green-600 transition-colors disabled:cursor-wait"
+            title="Assign to this board"
+          >
+            <Check className="w-3 h-3 text-white" />
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleType() }}
           disabled={loading}

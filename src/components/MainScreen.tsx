@@ -534,10 +534,12 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
       const pos = screenToPercent(e.clientX, e.clientY)
       if (pos) {
         updatePhoto(placingPhotoId, { pin_x: pos.x, pin_y: pos.y })
+        select(placingPhotoId, 'photo')
         void updatePhotoDb(placingPhotoId, { pin_x: pos.x, pin_y: pos.y }).then(() => {
-          toast.success('Photo placed on map')
+          toast.success('Photo placed on map — drag the handle to aim its cone')
         }).catch(() => {
           updatePhoto(placingPhotoId, { pin_x: null, pin_y: null })
+          select(null, null)
           toast.error('Failed to place photo on map')
         })
       }

@@ -213,7 +213,7 @@ export function BoardFocusPanel({
             </button>
           </div>
           <p className="mt-2 text-xs text-gray-500">
-            Click a photo to assign it. Click the preview to inspect it full size.
+            Click a photo to preview. Use the <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-green-500 align-middle"><svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg></span> button to assign it.
           </p>
         </div>
 
@@ -372,7 +372,8 @@ export function BoardFocusPanel({
                         photo={photo}
                         assignedBoardLabel={otherBoard?.label}
                         loading={pendingPhotoIds.has(photo.id)}
-                        onClick={() => onAssignPhoto(photo.id)}
+                        onClick={() => setLightboxPhoto(photo)}
+                        onAssign={() => onAssignPhoto(photo.id)}
                         onDelete={() => onDeletePhoto(photo.id)}
                         onToggleType={() => onTogglePhotoType(photo.id)}
                         onPlaceOnMap={photo.pin_x == null ? () => onPlaceOnMap(photo.id) : undefined}
