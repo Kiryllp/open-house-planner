@@ -10,6 +10,7 @@ interface BoardPinProps {
   focused: boolean
   showCone: boolean
   assignedPhotoUrl: string | null
+  colocatedPhotos?: number
   onClick: (e: React.MouseEvent) => void
   onMouseDown: (e: React.MouseEvent) => void
 }
@@ -24,6 +25,7 @@ export const BoardPin = memo(function BoardPin({
   focused,
   showCone,
   assignedPhotoUrl,
+  colocatedPhotos = 0,
   onClick,
   onMouseDown,
 }: BoardPinProps) {
@@ -152,6 +154,13 @@ export const BoardPin = memo(function BoardPin({
           )}
         </div>
 
+        {/* Co-located photos indicator */}
+        {colocatedPhotos > 0 && (
+          <div className="absolute -top-1 -right-1 flex items-center justify-center rounded-full bg-blue-500 text-white text-[8px] font-bold shadow-sm" style={{ width: 14, height: 14 }}>
+            {colocatedPhotos}
+          </div>
+        )}
+
         {/* Label — always below the pin */}
         <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold shadow-sm transition-colors whitespace-nowrap ${
           selected
@@ -177,5 +186,6 @@ export const BoardPin = memo(function BoardPin({
   prev.selected === next.selected &&
   prev.focused === next.focused &&
   prev.showCone === next.showCone &&
-  prev.assignedPhotoUrl === next.assignedPhotoUrl
+  prev.assignedPhotoUrl === next.assignedPhotoUrl &&
+  prev.colocatedPhotos === next.colocatedPhotos
 )

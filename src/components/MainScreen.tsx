@@ -523,6 +523,30 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     window.addEventListener('mouseup', onMouseUp, { signal: ac.signal })
   }
 
+  function placePhotoAt(photoId: string, x: number, y: number, directionDeg?: number) {
+    const updates: Partial<Photo> = { pin_x: x, pin_y: y }
+    if (directionDeg != null) updates.direction_deg = directionDeg
+    updatePhoto(photoId, updates)
+    select(photoId, 'photo')
+    void updatePhotoDb(photoId, updates).then(() => {
+      toast.success('Photo placed on map — drag the handle to aim its cone')
+    }).catch(() => {
+      updatePhoto(photoId, { pin_x: null, pin_y: null })
+      select(null, null)
+      toast.error('Failed to place photo on map')
+    })
+  }
+
+  function placePhotoAtBoard(photoId: string) {
+    const board = focusedBoard
+    if (!board) return
+    // Offset slightly so it doesn't sit exactly on the board pin
+    const offsetX = Math.max(0, Math.min(100, board.pin_x + 3))
+    const offsetY = Math.max(0, Math.min(100, board.pin_y + 3))
+    placePhotoAt(photoId, offsetX, offsetY, board.facing_deg)
+    setPlacingPhotoId(null)
+  }
+
   function handleCanvasClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement
     if (target.closest('[data-pin-id]')) return
@@ -533,15 +557,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     if (placingPhotoId) {
       const pos = screenToPercent(e.clientX, e.clientY)
       if (pos) {
-        updatePhoto(placingPhotoId, { pin_x: pos.x, pin_y: pos.y })
-        select(placingPhotoId, 'photo')
-        void updatePhotoDb(placingPhotoId, { pin_x: pos.x, pin_y: pos.y }).then(() => {
-          toast.success('Photo placed on map — drag the handle to aim its cone')
-        }).catch(() => {
-          updatePhoto(placingPhotoId, { pin_x: null, pin_y: null })
-          select(null, null)
-          toast.error('Failed to place photo on map')
-        })
+        placePhotoAt(placingPhotoId, pos.x, pos.y)
       }
       setPlacingPhotoId(null)
       return
@@ -963,6 +979,20 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
     return map
   }, [assignedPhotoByBoardId])
 
+  const colocatedCountByBoard = useMemo(() => {
+    const counts = new Map<string, number>()
+    const PROXIMITY = 5 // within 5% of board position counts as co-located
+    activeBoards.forEach(board => {
+      const count = activePhotos.filter(photo => {
+        if (!photo.board_id || photo.board_id !== board.id) return false
+        if (photo.pin_x == null || photo.pin_y == null) return false
+        return Math.abs(photo.pin_x - board.pin_x) < PROXIMITY && Math.abs(photo.pin_y - board.pin_y) < PROXIMITY
+      }).length
+      if (count > 0) counts.set(board.id, count)
+    })
+    return counts
+  }, [activeBoards, activePhotos])
+
   const panelAssignedPhotos: Photo[] = panelBoard ? assignedPhotoByBoardId.get(panelBoard.id) ?? [] : []
   const panelPotentialPhotos: Photo[] = panelBoard ? potentialPhotosByBoardId.get(panelBoard.id) ?? [] : []
   const panelAssignedPhotoIds = useMemo(() => new Set(panelAssignedPhotos.map(p => p.id)), [panelAssignedPhotos])
@@ -1150,6 +1180,7 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
                       focused={focusedBoardId ? focusedBoardId === board.id : true}
                       showCone={focusedBoardId ? focusedBoardId === board.id : true}
                       assignedPhotoUrl={boardPhotoUrls.get(board.id) || null}
+                      colocatedPhotos={colocatedCountByBoard.get(board.id) ?? 0}
                       onClick={(e) => handlePinClick(board.id, 'board', e)}
                       onMouseDown={(e) => handlePinMouseDown(board.id, 'board', e)}
                     />
@@ -1186,15 +1217,22 @@ export function MainScreen({ userName, onChangeName }: MainScreenProps) {
             {placingPhotoId && (
               <div className="absolute inset-0 z-30 pointer-events-none">
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-auto">
-                  <div className="flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 shadow-lg">
+                  <div className="flex items-center gap-2 rounded-xl border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 shadow-lg">
                     <MapPin className="h-4 w-4 animate-bounce" />
-                    Click on the map to place this photo
-                    <button onClick={() => setPlacingPhotoId(null)} className="ml-1 rounded-full bg-blue-200 px-2 py-0.5 text-xs hover:bg-blue-300 transition-colors">
+                    <span>Click on the map to place this photo</span>
+                    {focusedBoard && (
+                      <button
+                        onClick={() => placePhotoAtBoard(placingPhotoId)}
+                        className="rounded-full bg-blue-600 px-3 py-0.5 text-xs text-white hover:bg-blue-700 transition-colors"
+                      >
+                        Same location as {focusedBoard.label || 'board'}
+                      </button>
+                    )}
+                    <button onClick={() => setPlacingPhotoId(null)} className="rounded-full bg-blue-200 px-2 py-0.5 text-xs hover:bg-blue-300 transition-colors">
                       Cancel
                     </button>
                   </div>
                 </div>
-                <div className="absolute inset-0 cursor-crosshair" style={{ pointerEvents: 'none' }} />
               </div>
             )}
 
