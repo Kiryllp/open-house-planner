@@ -118,14 +118,19 @@ export function BoardPin({ board, selected, focused, assignedPhotoUrl, onClick, 
         )}
       </div>
 
-      {/* Label */}
+      {/* Label + assignment indicator */}
       <div
-        className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap"
+        className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap flex items-center gap-1"
         style={{ pointerEvents: 'none' }}
       >
         <span className="text-xs font-semibold text-gray-700 bg-white px-1.5 py-0.5 rounded shadow-sm border border-gray-100">
-          {board.label}
+          {board.label || 'Untitled'}
         </span>
+        {!assignedPhotoUrl && focused && (
+          <span className="text-[9px] text-orange-500 bg-orange-50 px-1 py-0.5 rounded border border-orange-200">
+            ?
+          </span>
+        )}
       </div>
     </div>
   )

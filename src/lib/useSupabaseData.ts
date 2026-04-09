@@ -15,6 +15,7 @@ interface UseSupabaseDataProps {
   removeBoard: (id: string) => void
   draggingId: string | null
   onLoaded?: () => void
+  onError?: (message: string) => void
 }
 
 export function useSupabaseData(props: UseSupabaseDataProps) {
@@ -25,6 +26,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     removePhoto, removeBoard,
     draggingId,
     onLoaded,
+    onError,
   } = props
 
   const draggingIdRef = useRef(draggingId)
@@ -38,14 +40,22 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     const supabase = createClient()
 
     async function loadData() {
-      const [photosRes, boardsRes] = await Promise.all([
-        supabase.from('photos').select('*').order('created_at', { ascending: true }),
-        supabase.from('boards').select('*').order('created_at', { ascending: true }),
-      ])
+      try {
+        const [photosRes, boardsRes] = await Promise.all([
+          supabase.from('photos').select('*').order('created_at', { ascending: true }),
+          supabase.from('boards').select('*').order('created_at', { ascending: true }),
+        ])
 
-      if (photosRes.data) setPhotos(photosRes.data)
-      if (boardsRes.data) setBoards(boardsRes.data)
-      onLoaded?.()
+        if (photosRes.error) throw new Error(`Photos: ${photosRes.error.message}`)
+        if (boardsRes.error) throw new Error(`Boards: ${boardsRes.error.message}`)
+
+        if (photosRes.data) setPhotos(photosRes.data)
+        if (boardsRes.data) setBoards(boardsRes.data)
+        onLoaded?.()
+      } catch (err) {
+        console.error('Failed to load data:', err)
+        onError?.((err as Error).message || 'Failed to load data')
+      }
     }
 
     loadData()
