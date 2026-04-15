@@ -178,6 +178,15 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
           strokeWidth={selected ? 1.5 : 1}
           style={{ pointerEvents: 'auto', cursor: 'default' }}
         />
+        <line
+          x1={svgCenter} y1={svgCenter}
+          x2={handleX + svgCenter} y2={handleY + svgCenter}
+          stroke={color}
+          strokeOpacity={0.35}
+          strokeWidth={1}
+          strokeDasharray="4 3"
+          style={{ pointerEvents: 'none' }}
+        />
         {showHandle && (
           <g
             ref={handleGroupRef}
