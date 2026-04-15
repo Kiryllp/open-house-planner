@@ -1,0 +1,142 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import type { Photo, ZoneId } from '@/lib/types'
+import { ZONE_IDS } from '@/lib/types'
+import { ZoneSection } from './ZoneSection'
+
+interface Props {
+  unusedConcepts: Photo[]
+  onDragStart: (e: React.DragEvent, photo: Photo) => void
+  onDragEnd: (e: React.DragEvent) => void
+  onCardClick: (photo: Photo) => void
+  onCardDelete: (photo: Photo) => void
+  onFilesDropped: (files: File[]) => void
+  onDropOnZone: (e: React.DragEvent, zone: ZoneId) => void
+}
+
+export function LeftPane({
+  unusedConcepts,
+  onDragStart,
+  onDragEnd,
+  onCardClick,
+  onCardDelete,
+  onFilesDropped,
+  onDropOnZone,
+}: Props) {
+  const [query, setQuery] = useState('')
+  const [highlightedSourceUploadId, setHighlightedSourceUploadId] =
+    useState<string | null>(null)
+  const [paneDragging, setPaneDragging] = useState(false)
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return unusedConcepts
+    const q = query.toLowerCase()
+    return unusedConcepts.filter(
+      (p) =>
+        p.notes?.toLowerCase().includes(q) ||
+        p.file_url.toLowerCase().includes(q),
+    )
+  }, [unusedConcepts, query])
+
+  const siblingCountByUploadId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of unusedConcepts) {
+      if (!p.source_upload_id) continue
+      map.set(p.source_upload_id, (map.get(p.source_upload_id) ?? 0) + 1)
+    }
+    return map
+  }, [unusedConcepts])
+
+  const byZone = useMemo(() => {
+    const map: Record<ZoneId, Photo[]> = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
+    for (const p of filtered) {
+      if (p.zone && map[p.zone]) {
+        map[p.zone].push(p)
+      }
+    }
+    for (const zone of ZONE_IDS) {
+      map[zone].sort((a, b) => {
+        const ra = a.zone_rank ?? 999
+        const rb = b.zone_rank ?? 999
+        if (ra !== rb) return ra - rb
+        return (a.created_at ?? '').localeCompare(b.created_at ?? '')
+      })
+    }
+    return map
+  }, [filtered])
+
+  const handlePaneDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault()
+      setPaneDragging(true)
+    }
+  }
+
+  const handlePaneDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget === e.target) setPaneDragging(false)
+  }
+
+  const handlePaneDrop = (e: React.DragEvent) => {
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      e.preventDefault()
+      const files = Array.from(e.dataTransfer.files).filter((f) =>
+        f.type.startsWith('image/'),
+      )
+      if (files.length > 0) onFilesDropped(files)
+    }
+    setPaneDragging(false)
+  }
+
+  const totalUnused = unusedConcepts.length
+
+  return (
+    <aside
+      onDragOver={handlePaneDragOver}
+      onDragLeave={handlePaneDragLeave}
+      onDrop={handlePaneDrop}
+      className={`relative flex h-full w-64 shrink-0 flex-col border-r border-gray-200 bg-white ${
+        paneDragging ? 'ring-2 ring-inset ring-blue-400' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between px-3 pt-3 pb-1">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-gray-700">
+          Unused Images
+        </h2>
+        <span className="text-[11px] text-gray-400">{totalUnused}</span>
+      </div>
+      <div className="px-3 pb-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search images..."
+          className="w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-blue-400 focus:bg-white focus:outline-none"
+        />
+      </div>
+
+      <div className="flex-1 overflow-y-auto pb-4">
+        {ZONE_IDS.map((zone) => (
+          <ZoneSection
+            key={zone}
+            zone={zone}
+            photos={byZone[zone]}
+            highlightedSourceUploadId={highlightedSourceUploadId}
+            onHoverSiblings={setHighlightedSourceUploadId}
+            siblingCountByUploadId={siblingCountByUploadId}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onCardClick={onCardClick}
+            onCardDelete={onCardDelete}
+            onDropOnZone={onDropOnZone}
+          />
+        ))}
+      </div>
+
+      {paneDragging && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-blue-50/80 text-sm font-medium text-blue-700">
+          Drop images to upload
+        </div>
+      )}
+    </aside>
+  )
+}

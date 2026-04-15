@@ -3,27 +3,21 @@
 import { useEffect, useRef } from 'react'
 import { REALTIME_SUBSCRIBE_STATES, type RealtimePostgresChangesPayload } from '@supabase/realtime-js'
 import { createClient } from './supabase/client'
-import type { Board, Photo } from './types'
+import type { Photo } from './types'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
 export interface UserPresence {
   userName: string
-  boardId: string | null
 }
 
 interface UseSupabaseDataProps {
   setPhotos: (photos: Photo[]) => void
-  setBoards: (boards: Board[]) => void
   updatePhoto: (id: string, updates: Partial<Photo>) => void
-  updateBoard: (id: string, updates: Partial<Board>) => void
   addPhoto: (photo: Photo) => void
-  addBoard: (board: Board) => void
   removePhoto: (id: string) => void
-  removeBoard: (id: string) => void
   draggingId: string | null
   userName: string
-  currentBoardId: string | null
   onLoaded?: () => void
   onError?: (message: string) => void
   onConnectionStatusChange?: (status: ConnectionStatus) => void
@@ -32,13 +26,12 @@ interface UseSupabaseDataProps {
 
 export function useSupabaseData(props: UseSupabaseDataProps) {
   const {
-    setPhotos, setBoards,
-    updatePhoto, updateBoard,
-    addPhoto, addBoard,
-    removePhoto, removeBoard,
+    setPhotos,
+    updatePhoto,
+    addPhoto,
+    removePhoto,
     draggingId,
     userName,
-    currentBoardId,
     onLoaded,
     onError,
     onConnectionStatusChange,
@@ -48,40 +41,32 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
   const draggingIdRef = useRef(draggingId)
   draggingIdRef.current = draggingId
 
-  const cbRef = useRef({ updatePhoto, updateBoard, addPhoto, addBoard, removePhoto, removeBoard })
-  cbRef.current = { updatePhoto, updateBoard, addPhoto, addBoard, removePhoto, removeBoard }
+  const cbRef = useRef({ updatePhoto, addPhoto, removePhoto })
+  cbRef.current = { updatePhoto, addPhoto, removePhoto }
 
   const lifecycleRef = useRef({ onLoaded, onError, onConnectionStatusChange, onPresenceChange })
   lifecycleRef.current = { onLoaded, onError, onConnectionStatusChange, onPresenceChange }
 
   const userNameRef = useRef(userName)
   userNameRef.current = userName
-  const currentBoardIdRef = useRef(currentBoardId)
-  currentBoardIdRef.current = currentBoardId
+
   const loadDataRef = useRef<(() => Promise<void>) | null>(null)
 
-  // Load initial data
+  // Initial load
   useEffect(() => {
     const supabase = createClient()
 
     loadDataRef.current = async () => {
       try {
-        const [photosRes, boardsRes] = await Promise.all([
-          supabase.from('photos').select('*').order('created_at', { ascending: true }),
-          supabase.from('boards').select('*').order('created_at', { ascending: true }),
-        ])
-
-        if (photosRes.error) {
-          console.error('Photos query failed:', photosRes.error.code, photosRes.error.message, photosRes.error.details, photosRes.error.hint)
-          throw new Error(`Photos: ${photosRes.error.message}`)
+        const res = await supabase
+          .from('photos')
+          .select('*')
+          .order('created_at', { ascending: true })
+        if (res.error) {
+          console.error('Photos query failed:', res.error)
+          throw new Error(`Photos: ${res.error.message}`)
         }
-        if (boardsRes.error) {
-          console.error('Boards query failed:', boardsRes.error.code, boardsRes.error.message, boardsRes.error.details, boardsRes.error.hint)
-          throw new Error(`Boards: ${boardsRes.error.message}`)
-        }
-
-        if (photosRes.data) setPhotos(photosRes.data)
-        if (boardsRes.data) setBoards(boardsRes.data)
+        if (res.data) setPhotos(res.data as Photo[])
         lifecycleRef.current.onLoaded?.()
       } catch (err) {
         console.error('Failed to load data:', err)
@@ -90,48 +75,38 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
     }
 
     void loadDataRef.current()
-  }, [setPhotos, setBoards])
+  }, [setPhotos])
 
-  // Realtime subscriptions
+  // Realtime subscriptions + presence
   useEffect(() => {
     const supabase = createClient()
     let hasConnectedOnce = false
     let shouldReloadOnReconnect = false
+    let isReloading = false
 
     lifecycleRef.current.onConnectionStatusChange?.('connecting')
 
-    let isReloading = false
-
     const channel = supabase
-      .channel('realtime-all')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload: RealtimePostgresChangesPayload<Photo>) => {
-        if (isReloading) return
-        const cb = cbRef.current
-        if (payload.eventType === 'INSERT') {
-          if (payload.new) cb.addPhoto(payload.new as Photo)
-        } else if (payload.eventType === 'UPDATE') {
-          if (!payload.new) return
-          const updated = payload.new as Photo
-          if (updated.id === draggingIdRef.current) return
-          cb.updatePhoto(updated.id, updated)
-        } else if (payload.eventType === 'DELETE') {
-          if (payload.old?.id) cb.removePhoto(payload.old.id)
-        }
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload: RealtimePostgresChangesPayload<Board>) => {
-        if (isReloading) return
-        const cb = cbRef.current
-        if (payload.eventType === 'INSERT') {
-          if (payload.new) cb.addBoard(payload.new as Board)
-        } else if (payload.eventType === 'UPDATE') {
-          if (!payload.new) return
-          const updated = payload.new as Board
-          if (updated.id === draggingIdRef.current) return
-          cb.updateBoard(updated.id, updated)
-        } else if (payload.eventType === 'DELETE') {
-          if (payload.old?.id) cb.removeBoard(payload.old.id)
-        }
-      })
+      .channel('realtime-photos')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'photos' },
+        (payload: RealtimePostgresChangesPayload<Photo>) => {
+          if (isReloading) return
+          const cb = cbRef.current
+          if (payload.eventType === 'INSERT') {
+            if (payload.new) cb.addPhoto(payload.new as Photo)
+          } else if (payload.eventType === 'UPDATE') {
+            if (!payload.new) return
+            const updated = payload.new as Photo
+            if (updated.id === draggingIdRef.current) return
+            cb.updatePhoto(updated.id, updated)
+          } else if (payload.eventType === 'DELETE') {
+            const oldRow = payload.old as Partial<Photo> | null
+            if (oldRow?.id) cb.removePhoto(oldRow.id)
+          }
+        },
+      )
       .subscribe((status: REALTIME_SUBSCRIBE_STATES) => {
         if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
           lifecycleRef.current.onConnectionStatusChange?.('connected')
@@ -143,7 +118,6 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
           shouldReloadOnReconnect = false
           return
         }
-
         if (
           status === REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR ||
           status === REALTIME_SUBSCRIBE_STATES.TIMED_OUT ||
@@ -156,7 +130,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
 
     const presenceKey = userName || 'anonymous'
     const presenceChannel = supabase.channel('user-presence', {
-      config: { presence: { key: presenceKey } }
+      config: { presence: { key: presenceKey } },
     })
 
     presenceChannel
@@ -164,9 +138,9 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
         const state = presenceChannel.presenceState()
         const users: UserPresence[] = []
         Object.values(state).forEach((presences: unknown) => {
-          (presences as any[]).forEach((p: any) => {
-            if (p.userName !== userNameRef.current) {
-              users.push({ userName: p.userName, boardId: p.boardId })
+          ;(presences as Array<{ userName?: string }>).forEach((p) => {
+            if (p.userName && p.userName !== userNameRef.current) {
+              users.push({ userName: p.userName })
             }
           })
         })
@@ -174,10 +148,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
       })
       .subscribe(async (status: REALTIME_SUBSCRIBE_STATES) => {
         if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
-          await presenceChannel.track({
-            userName: userNameRef.current,
-            boardId: currentBoardIdRef.current
-          })
+          await presenceChannel.track({ userName: userNameRef.current })
         }
       })
 
@@ -187,18 +158,4 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
       void supabase.removeChannel(presenceChannel)
     }
   }, [userName])
-
-  // Re-track presence when currentBoardId changes
-  useEffect(() => {
-    const supabase = createClient()
-    const presenceKey = userName || 'anonymous'
-    const channels = supabase.getChannels()
-    const presenceChannel = channels.find((ch: any) => ch.topic === 'realtime:user-presence')
-    if (presenceChannel) {
-      void presenceChannel.track({
-        userName,
-        boardId: currentBoardId
-      })
-    }
-  }, [currentBoardId, userName])
 }
