@@ -22,8 +22,7 @@ import { UploadDialog } from './UploadDialog'
 import { ConceptPreviewModal } from './ConceptPreviewModal'
 import { SimpleGallery } from './SimpleGallery'
 import { RealPhotosView } from './RealPhotosView'
-import { buildExportZip, downloadBlob } from '@/lib/exportOriginalsZip'
-import { ExportMapRenderer } from './ExportMapRenderer'
+import { ExportDialog } from './ExportDialog'
 import { DragGhost } from './DragGhost'
 
 interface Props {
@@ -33,17 +32,17 @@ interface Props {
 
 const FLOORPLAN_URL = process.env.NEXT_PUBLIC_FLOORPLAN_URL ?? null
 
-// Preloaded 1x1 transparent GIF used to hide the browser's native drag image.
-// Must be loaded before setDragImage is called or the browser falls back to
-// its default preview (a globe icon on macOS).
-let _emptyDragImg: HTMLImageElement | null = null
-function getEmptyDragImage(): HTMLImageElement {
-  if (!_emptyDragImg) {
-    _emptyDragImg = new Image()
-    _emptyDragImg.src =
-      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+// 1x1 transparent canvas used as the native drag image. Canvas is
+// synchronously available (no decode/load step) so the browser never
+// falls back to its default drag preview.
+let _emptyCanvas: HTMLCanvasElement | null = null
+function getEmptyDragCanvas(): HTMLCanvasElement {
+  if (!_emptyCanvas) {
+    _emptyCanvas = document.createElement('canvas')
+    _emptyCanvas.width = 1
+    _emptyCanvas.height = 1
   }
-  return _emptyDragImg
+  return _emptyCanvas
 }
 
 export function MainScreen({ userName, onChangeName }: Props) {
@@ -58,9 +57,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [tab, setTab] = useState<TopTab>('concept')
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const exportMapRef = useRef<HTMLDivElement>(null)
 
   // --- State updaters wired into realtime subscription ---------------
   const setPhotos = useCallback((next: Photo[]) => {
@@ -136,21 +134,39 @@ export function MainScreen({ userName, onChangeName }: Props) {
   }, [])
 
   // --- Drag from left pane to map -----------------------------------
+  const dragSuppressRef = useRef<(() => void) | null>(null)
+
   const handleLeftPaneDragStart = useCallback(
     (e: React.DragEvent, photo: Photo) => {
       e.dataTransfer.setData('application/x-ohp-photo-id', photo.id)
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setDragImage(getEmptyDragImage(), 0, 0)
+      e.dataTransfer.setDragImage(getEmptyDragCanvas(), 0, 0)
+
+      // Suppress the browser's native drag cursor (globe / no-entry)
+      // SYNCHRONOUSLY during dragstart — before any dragover event fires.
+      // DragGhost's useEffect would be too late (runs after paint).
+      const prevent = (ev: Event) => { ev.preventDefault() }
+      window.addEventListener('dragover', prevent, true)
+      window.addEventListener('drop', prevent, true)
+      dragSuppressRef.current = () => {
+        window.removeEventListener('dragover', prevent, true)
+        window.removeEventListener('drop', prevent, true)
+      }
+
       setLeftPaneDragPhoto(photo)
     },
     [],
   )
   const handleLeftPaneDragEnd = useCallback(() => {
+    dragSuppressRef.current?.()
+    dragSuppressRef.current = null
     setLeftPaneDragPhoto(null)
   }, [])
 
   const handleDropOnMap = useCallback(
     async (photoId: string, xPct: number, yPct: number) => {
+      dragSuppressRef.current?.()
+      dragSuppressRef.current = null
       setGhostDropping(true)
       if (ghostTimerRef.current) clearTimeout(ghostTimerRef.current)
       ghostTimerRef.current = setTimeout(() => {
@@ -314,37 +330,14 @@ export function MainScreen({ userName, onChangeName }: Props) {
     window.open('/export/print', '_blank', 'noopener')
   }, [])
 
-  // --- Export: Project ZIP (client-side) -------------------------------
-  const handleExportProject = useCallback(async () => {
-    if (downloading) return
+  // --- Export: Project ZIP+PDF (client-side, see ExportDialog) ---------
+  const handleExportProject = useCallback(() => {
     if (visibleConcepts.length === 0) {
       toast.error('No placed photos to export')
       return
     }
-    setDownloading(true)
-    try {
-      let mapBlob: Blob | null = null
-      if (exportMapRef.current) {
-        const { toPng } = await import('html-to-image')
-        const dataUrl = await toPng(exportMapRef.current, {
-          width: 1600,
-          height: 1067,
-          pixelRatio: 1,
-        })
-        const res = await fetch(dataUrl)
-        mapBlob = await res.blob()
-      }
-      const blob = await buildExportZip(photos, mapBlob)
-      const stamp = new Date().toISOString().slice(0, 10)
-      downloadBlob(blob, `open-house-export-${stamp}.zip`)
-      toast.success('Export downloaded')
-    } catch (err) {
-      console.error(err)
-      toast.error((err as Error).message || 'Export failed')
-    } finally {
-      setDownloading(false)
-    }
-  }, [downloading, photos, visibleConcepts.length])
+    setExportOpen(true)
+  }, [visibleConcepts.length])
 
   // --- Render --------------------------------------------------------
   if (!loaded) {
@@ -371,7 +364,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
         onUploadFiles={handleFiles}
         onPrintMap={handlePrintMap}
         onDownloadOriginals={handleExportProject}
-        downloading={downloading}
+        downloading={exportOpen}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -481,11 +474,13 @@ export function MainScreen({ userName, onChangeName }: Props) {
         />
       )}
 
-      <ExportMapRenderer
-        ref={exportMapRef}
-        floorplanUrl={FLOORPLAN_URL}
-        photos={visibleConcepts}
-      />
+      {exportOpen && (
+        <ExportDialog
+          photos={photos}
+          floorplanUrl={FLOORPLAN_URL}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
 
       {(leftPaneDragPhoto || draggingMapPhoto) && (
         <DragGhost

@@ -41,25 +41,14 @@ export function DragGhost({ photo, dropping }: Props) {
       })
     }
 
-    // preventDefault in capture phase on window — fires before any other
-    // handler, tells the browser "valid drop target" so it suppresses the
-    // native globe / no-entry cursor icon everywhere.
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault()
-      updatePos(e.clientX, e.clientY)
-    }
+    const onDragOver = (e: DragEvent) => updatePos(e.clientX, e.clientY)
     const onPointerMove = (e: PointerEvent) => updatePos(e.clientX, e.clientY)
-
-    // Prevent browser from navigating if user drops outside the map
-    const onDrop = (e: DragEvent) => { e.preventDefault() }
 
     window.addEventListener('dragover', onDragOver, true)
     window.addEventListener('pointermove', onPointerMove, true)
-    window.addEventListener('drop', onDrop, true)
     return () => {
       window.removeEventListener('dragover', onDragOver, true)
       window.removeEventListener('pointermove', onPointerMove, true)
-      window.removeEventListener('drop', onDrop, true)
       cancelAnimationFrame(rafRef.current)
     }
   }, [])
