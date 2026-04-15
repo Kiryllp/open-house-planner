@@ -25,14 +25,22 @@ surface that log in the UI so any collaborator can see how an image evolved.
 | `uploadPhoto` + `insertPhotos` | storage + photos INSERT | `UploadDialog.tsx:98–131`, `ConceptPreviewModal.tsx:70–112` |
 | `updatePhotoDb({ name })` | photos.name | `ConceptPreviewModal.tsx:161`, `RealPhotosView.tsx:197` |
 | `updatePhotoDb({ notes })` | photos.notes | `ConceptPreviewModal.tsx:145` |
-| `updatePhotoDb({ zone, zone_rank })` | photos.zone | `ConceptPreviewModal.tsx:118`, `RealPhotosView.tsx:144`, `MainScreen.tsx:176` |
-| `placePhotoOnMap` | pin_x, pin_y | `MainScreen.tsx:148` (first placement), `MainScreen.tsx:200` (drag end) |
-| `removePhotoFromMap` | pin_x/pin_y → null | `MainScreen.tsx:231` |
-| `updatePhotoDb({ direction_deg })` | direction_deg | `MainScreen.tsx:218` |
-| `updatePhotoDb({ color })` | color | `MainScreen.tsx:149` (auto on first place) |
+| `updatePhotoDb({ zone, zone_rank })` | photos.zone | `ConceptPreviewModal.tsx:118`, `RealPhotosView.tsx:144`, `MainScreen.tsx:220` |
+| `placePhotoOnMap` | pin_x, pin_y | `MainScreen.tsx:192` (first placement), `MainScreen.tsx:246` (drag end) |
+| `removePhotoFromMap` | pin_x/pin_y → null | `MainScreen.tsx:277` |
+| `updatePhotoDb({ direction_deg })` | direction_deg | `MainScreen.tsx:264` |
+| `updatePhotoDb({ color })` | color | `MainScreen.tsx:193` (auto on first place) |
 | `linkConceptToReal` | linked_real_id | `ConceptPreviewModal.tsx:46, 60`, `RealPhotosView.tsx:167, 181`, `LinkingView.tsx:70` |
-| `softDeletePhoto` / `restorePhoto` | deleted_at | `MainScreen.tsx:244, 255`, `ConceptPreviewModal.tsx:131` |
-| `hardDeletePhotos` | DELETE | `MainScreen.tsx:266` |
+| `softDeletePhoto` / `restorePhoto` | deleted_at | `MainScreen.tsx:290, 301`, `ConceptPreviewModal.tsx:131` |
+| `hardDeletePhotos` | DELETE | `MainScreen.tsx:312` |
+
+> **Implementer helper:** `MainScreen.tsx` now keeps a `photosRef` (declared
+> at line 57, synced at line 83: `photosRef.current = photos`). Use
+> `photosRef.current.find(p => p.id === id)` inside the mutation callbacks
+> to obtain the `before` snapshot for `updatePhotoTracked` without needing
+> to thread `photos` through every closure. `handleDropOnMap` and
+> `handleDropOnZone` already have `photos` in their dependency array, so
+> they can read the closure directly; the rest should use `photosRef`.
 
 ### Existing audit infrastructure
 - Migration `001_initial_schema.sql` had an `activity_log` table — dropped
@@ -281,12 +289,13 @@ commit;
      writes an `uploaded` event.
    - `softDeletePhotoTracked(id, actorName, before)`.
    - `restorePhotoTracked(...)`.
-   - `hardDeletePhotosTracked(ids, actorName, beforeList)` — writes
-     `hard_deleted` events *before* the delete so the rows still have FKs.
-     Because of `on delete cascade`, these events will be removed with the
-     photo immediately; if we want them to survive, change the FK to
-     `on delete set null` and add a `deleted_photo_label` column. **Open
-     decision — see below.**
+   - `hardDeletePhotosTracked(ids, actorName, beforeList)` — **decision
+     locked: cascade**. Because `photo_history.photo_id` has `ON DELETE
+     CASCADE`, hard-deleting a photo wipes its history rows with it. We
+     therefore do NOT emit `hard_deleted` events (they would be orphaned
+     instantly). The `'hard_deleted'` value stays in the check constraint
+     for future use but is never written today. Accept that hard-delete
+     also means "purge audit trail" — soft-delete is the preserving path.
 
 4. **`src/components/MainScreen.tsx`**
 
@@ -357,9 +366,10 @@ commit;
 - **Auto color assignment**: the color is included in the
   `placed_on_map.details.color` payload. We do NOT emit a separate
   `color_changed` event for the auto-assignment.
-- **Soft delete → restore → hard delete**: each is its own event. Hard
-  delete's events survive only if we change the FK cascade (see Open
-  Decision #1).
+- **Soft delete → restore**: each is its own event. **Hard delete**: no
+  event emitted; the cascade wipes the history along with the photo. This
+  is the agreed behavior — if you want history preserved, use soft-delete
+  and leave the row in Trash.
 - **Backfill for existing photos**: handled by migration 008 — every row
   gets a synthetic `uploaded` event with `details.backfill = true`.
 
@@ -379,42 +389,28 @@ Against a running dev server, as user `Alice`:
 - [ ] Unlink → `unlinked_from_real`.
 - [ ] Soft delete → `soft_deleted`.
 - [ ] Restore from Trash → `restored`.
-- [ ] Hard delete → history is gone (expected with cascade) OR preserved
-  in the archive table (if Open Decision #1 = "set null").
+- [ ] Hard delete → history is gone (expected: the FK cascade wipes it).
 - [ ] Open a second browser tab as `Bob`, edit the same photo → `Alice` sees
   the event appear live in the History panel without refresh (realtime).
 - [ ] Existing photos (pre-migration) show exactly one `uploaded` event
   with `backfill: true`.
 
-## Open decisions (for you to answer before implementation)
+## Decisions (locked)
 
-1. **Should hard-delete wipe history?**
-   - *Current plan:* yes, because `photo_id` has `on delete cascade`.
-     Simpler, smaller surface, but you lose the trail.
-   - *Alternative:* change FK to `on delete set null` and add a denormalized
-     `deleted_photo_label text` column so the row remains legible. History
-     survives forever.
-   - **Recommendation:** set null + denormalized label. History is the
-     whole point; losing it on hard-delete defeats the feature.
-
-2. **Should we also track the `created_by_name` field as a "renamed" event
-   when it changes?** Currently `created_by_name` is immutable post-upload,
-   but the UI does expose "Change name" for the current session user. The
-   change affects *new* mutations, not the historical attribution.
-   - **Recommendation:** no, session name changes affect only future events
-     by design.
-
-3. **Retention / cleanup.**
-   - *Current plan:* keep forever.
-   - Alternative: add a nightly SQL `delete from photo_history where created_at < now() - interval '90 days'`.
-   - **Recommendation:** keep forever until the table exceeds ~100k rows,
-     then decide based on real usage.
-
-4. **Should the History panel be a tab, a bottom drawer, or an inline
-   expandable section?**
-   - **Recommendation:** tab in `ConceptPreviewModal` (consistent with
-     `RealPhotosView`'s existing Gallery/Quick-Link sub-tabs) + inline
-     collapsible section in `RealPhotoRow` (since those aren't modal).
+1. **Hard-delete behavior:** cascade — history dies with the photo. No
+   special schema gymnastics. Users who want to preserve history keep the
+   photo in Trash (soft-deleted) instead of pressing Delete Forever.
+2. **Session name change does not emit a renamed event.** The
+   `created_by_name` column is immutable post-upload by design; future
+   events just use the new `userName`.
+3. **Retention:** keep forever until the table exceeds ~100k rows. Revisit
+   only if volume becomes a real problem.
+4. **UI placement:** `ConceptPreviewModal` gets a top-level tab bar
+   (`Overview | History`) above the scroll body. `RealPhotoRow` inside
+   `RealPhotosView` gets an inline collapsible History section between
+   the Linked Concepts section and the footer.
+5. **Actor fallback** when `userName` is blank: stored as `null` in
+   `actor_name`, rendered as "Unknown" in the UI.
 
 ## Risks and mitigations
 

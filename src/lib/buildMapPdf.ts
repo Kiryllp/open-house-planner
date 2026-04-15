@@ -1,5 +1,10 @@
 import type { Photo } from './types'
-import { fetchThumbnail, type Thumbnail } from './imageThumb'
+import {
+  fetchImage,
+  getPdfBytes,
+  type FetchedImage,
+  type PdfEmbeddable,
+} from './imageThumb'
 import { fitImageInBox } from './pinGeometry'
 
 /**
@@ -39,6 +44,21 @@ const KEY_GUTTER_Y = 24
 
 const FULLSIZE_MARGIN = 36
 const FULLSIZE_CAPTION_H = 70
+
+// Key-grid thumbnail budget. ~100pt wide cell × ~4 rendering scale = 400px
+// minimum; 1200 gives PDF viewers room to zoom without the thumbnail
+// going soft. Quality 0.9 keeps file size reasonable.
+const KEY_THUMB_MAXDIM = 1200
+const KEY_THUMB_QUALITY = 0.9
+
+// Full-size reference pages use the raw bytes whenever the original is
+// PNG or JPEG and no larger than 4000px on its longest side — which is
+// the overwhelming majority of phone camera and DSLR output. Anything
+// larger gets a single JPEG re-encode at near-lossless quality.
+const FULLSIZE_MAXDIM = 4000
+const FULLSIZE_QUALITY = 0.92
+
+const FETCH_CONCURRENCY = 5
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -114,47 +134,63 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
   const mapBuf = await opts.mapPng.arrayBuffer()
   const mapImage = await pdf.embedPng(mapBuf)
 
-  // Pre-fetch all thumbnails up front so the rest of the build is pure
-  // layout math with no async. Uses a concurrency limit of 5.
+  // Pre-fetch every photo URL exactly once, then derive whatever the PDF
+  // needs from the cached FetchedImage (full resolution + raw bytes +
+  // dimensions). Two photos with the same file_url — e.g. a multi-zone
+  // concept — share a single fetch.
   const total = opts.placedPhotos.length
-  const thumbs: Array<Thumbnail | null> = new Array(total).fill(null)
+  const imageByUrl = new Map<string, FetchedImage | null>()
   {
-    const concurrency = 5
+    const uniqueUrls = Array.from(
+      new Set(opts.placedPhotos.map((p) => p.file_url)),
+    )
     let cursor = 0
     let doneCount = 0
-    report(0, total, 'Fetching thumbnails (0/' + total + ')')
+    report(0, uniqueUrls.length, `Fetching images (0/${uniqueUrls.length})`)
 
     const worker = async (): Promise<void> => {
-      while (cursor < total) {
+      while (cursor < uniqueUrls.length) {
         const idx = cursor++
+        const url = uniqueUrls[idx]
         throwIfAborted(opts.signal)
         try {
-          thumbs[idx] = await fetchThumbnail(
-            opts.placedPhotos[idx].file_url,
-            400,
-            opts.signal,
-          )
+          imageByUrl.set(url, await fetchImage(url, opts.signal))
         } catch (err) {
           if ((err as DOMException)?.name === 'AbortError') throw err
-          // We still want the PDF to build even if one thumbnail fails.
-          // The cell will render a placeholder instead.
-          thumbs[idx] = null
-          console.warn('Thumbnail fetch failed', err)
+          imageByUrl.set(url, null)
+          console.warn('PDF image fetch failed', err)
         }
         doneCount++
         report(
           doneCount,
-          total,
-          `Fetching thumbnails (${doneCount}/${total})`,
+          uniqueUrls.length,
+          `Fetching images (${doneCount}/${uniqueUrls.length})`,
         )
       }
     }
 
     const workers: Array<Promise<void>> = []
-    for (let i = 0; i < Math.min(concurrency, total); i++) {
+    for (let i = 0; i < Math.min(FETCH_CONCURRENCY, uniqueUrls.length); i++) {
       workers.push(worker())
     }
     await Promise.all(workers)
+  }
+
+  // Derive the key-grid thumbnails. These are small, so per-photo cost
+  // is modest even for ~100-photo projects.
+  report(0, total, `Preparing key thumbnails (0/${total})`)
+  const keyThumbs: Array<PdfEmbeddable | null> = new Array(total).fill(null)
+  for (let i = 0; i < total; i++) {
+    throwIfAborted(opts.signal)
+    const photo = opts.placedPhotos[i]
+    const img = imageByUrl.get(photo.file_url)
+    if (!img) continue
+    try {
+      keyThumbs[i] = await getPdfBytes(img, KEY_THUMB_MAXDIM, KEY_THUMB_QUALITY)
+    } catch (err) {
+      console.warn('Key thumbnail prep failed', err)
+    }
+    report(i + 1, total, `Preparing key thumbnails (${i + 1}/${total})`)
   }
 
   // ---- Cover + Map page --------------------------------------------------
@@ -273,7 +309,7 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
       if (photoIdx >= total) break
 
       const photo = opts.placedPhotos[photoIdx]
-      const thumb = thumbs[photoIdx]
+      const thumb = keyThumbs[photoIdx]
       const col = slot % KEY_COLS
       const row = Math.floor(slot / KEY_COLS)
 
@@ -317,7 +353,7 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
             height: fit.h,
           })
         } catch (err) {
-          console.warn('Embed failed for thumbnail', err)
+          console.warn('Embed failed for key thumbnail', err)
         }
       } else {
         page.drawRectangle({
@@ -426,10 +462,20 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
         total,
         `Drawing full-size pages (${i + 1}/${total})`,
       )
-      const thumb = thumbs[i]
-      if (!thumb) continue
-
       const photo = opts.placedPhotos[i]
+      const img = imageByUrl.get(photo.file_url)
+      if (!img) continue
+
+      // Derive high-quality bytes per-photo so we don't hold every
+      // decoded full-size image in memory at once.
+      let fullsize: PdfEmbeddable
+      try {
+        fullsize = await getPdfBytes(img, FULLSIZE_MAXDIM, FULLSIZE_QUALITY)
+      } catch (err) {
+        console.warn('Fullsize prep failed', err)
+        continue
+      }
+
       const page = pdf.addPage([LETTER_LONG, LETTER_SHORT])
       const pageW = page.getWidth()
       const pageH = page.getHeight()
@@ -437,9 +483,9 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
       let embedded
       try {
         embedded =
-          thumb.mime === 'image/png'
-            ? await pdf.embedPng(thumb.bytes)
-            : await pdf.embedJpg(thumb.bytes)
+          fullsize.mime === 'image/png'
+            ? await pdf.embedPng(fullsize.bytes)
+            : await pdf.embedJpg(fullsize.bytes)
       } catch (err) {
         console.warn('Embed failed for full-size page', err)
         continue
