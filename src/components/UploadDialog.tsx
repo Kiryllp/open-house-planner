@@ -107,7 +107,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
             const row: PhotoInsert = basePhoto({
               file_url: fileUrl,
               type: 'real',
-              zone: null,
+              zone: entry.zones[0] ?? null,
               zone_rank: null,
               source_upload_id: sourceUploadId,
               userName,
@@ -226,43 +226,46 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
                   </button>
                 </div>
 
-                {entry.type === 'concept' && (
-                  <div className="mt-2">
-                    <div className="mb-1 text-[11px] text-gray-500">
-                      Zones{' '}
-                      {entry.zones.length === 0 && (
-                        <span className="text-red-500">
-                          (pick at least one)
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {ZONE_IDS.map((zone) => {
-                        const rank = entry.zones.indexOf(zone)
-                        const active = rank !== -1
-                        return (
-                          <button
-                            type="button"
-                            key={zone}
-                            onClick={() => toggleZone(idx, zone)}
-                            className={`rounded-md border px-2 py-0.5 text-[11px] ${
-                              active
-                                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                            }`}
-                          >
-                            Zone {zone}
-                            {active && (
-                              <span className="ml-1 text-[9px] text-blue-500">
-                                {zoneRankLabel(rank + 1)}
-                              </span>
-                            )}
-                          </button>
-                        )
-                      })}
-                    </div>
+                <div className="mt-2">
+                  <div className="mb-1 text-[11px] text-gray-500">
+                    {entry.type === 'concept' ? 'Zones' : 'Zone'}{' '}
+                    {entry.type === 'concept' && entry.zones.length === 0 && (
+                      <span className="text-red-500">
+                        (pick at least one)
+                      </span>
+                    )}
+                    {entry.type === 'real' && entry.zones.length === 0 && (
+                      <span className="text-gray-400">
+                        (optional)
+                      </span>
+                    )}
                   </div>
-                )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {ZONE_IDS.map((zone) => {
+                      const rank = entry.zones.indexOf(zone)
+                      const active = rank !== -1
+                      return (
+                        <button
+                          type="button"
+                          key={zone}
+                          onClick={() => toggleZone(idx, zone)}
+                          className={`rounded-md border px-2 py-0.5 text-[11px] ${
+                            active
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          Zone {zone}
+                          {active && entry.type === 'concept' && (
+                            <span className="ml-1 text-[9px] text-blue-500">
+                              {zoneRankLabel(rank + 1)}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           ))}
