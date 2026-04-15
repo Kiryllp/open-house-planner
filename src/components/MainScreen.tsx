@@ -24,6 +24,7 @@ import { SimpleGallery } from './SimpleGallery'
 import { RealPhotosView } from './RealPhotosView'
 import { buildExportZip, downloadBlob } from '@/lib/exportOriginalsZip'
 import { ExportMapRenderer } from './ExportMapRenderer'
+import { DragGhost } from './DragGhost'
 
 interface Props {
   userName: string
@@ -461,6 +462,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
         floorplanUrl={FLOORPLAN_URL}
         photos={visibleConcepts}
       />
+
+      {leftPaneDragPhoto && <DragGhost photo={leftPaneDragPhoto} />}
     </div>
   )
 }

@@ -1,5 +1,4 @@
 'use client'
-/* eslint-disable @next/next/no-img-element */
 
 import { forwardRef } from 'react'
 import type { Photo } from '@/lib/types'
@@ -10,27 +9,24 @@ interface Props {
 }
 
 /**
- * Preview overlay shown on the map while dragging a photo from the left pane.
+ * Landing indicator shown on the map surface while dragging a photo.
+ * Shows a reticle, ground shadow, and colored glow at the exact landing
+ * point — the pin thumbnail itself follows the cursor via DragGhost.
  *
- * Scale behavior: this element lives inside TransformComponent's content div,
- * so it scales with map zoom — matching how real PhotoPins behave. A
- * fixed-screen-size preview would mismatch the placed pin at non-1x zoom.
- *
- * Position is driven by the parent (MapCanvas) writing directly to the
- * forwarded ref's style.left / style.top in a rAF loop, bypassing React
- * state to avoid per-frame re-renders during drag.
- *
- * Validity (inside vs outside the floorplan image) is communicated via the
- * data-valid attribute, also set by MapCanvas in the same rAF loop.
+ * Lives inside TransformComponent content so it scales with map zoom.
+ * Position is driven by MapCanvas via the forwarded ref (rAF writes to
+ * style.left / style.top). Validity is communicated via data-valid.
  */
 export const DropPreviewOverlay = forwardRef<HTMLDivElement, Props>(
   function DropPreviewOverlay({ photo, dropping }, ref) {
-    const color = photo?.color || '#3b82f6'
+    const color = photo
+      ? (photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7'))
+      : '#3b82f6'
 
     return (
       <div
         ref={ref}
-        className="drop-preview-root"
+        className="dp-root"
         data-dropping={dropping}
         data-valid="true"
         style={{
@@ -41,137 +37,122 @@ export const DropPreviewOverlay = forwardRef<HTMLDivElement, Props>(
           height: 0,
           overflow: 'visible',
           pointerEvents: 'none',
-          animation: 'drop-appear 150ms ease-out both',
+          animation: 'dp-appear 200ms ease-out both',
         }}
       >
-        {/* Reticle ring — marks the exact landing point on the map surface */}
+        {/* Colored glow: soft light pool on the map surface */}
         <div
-          className="drop-preview-reticle"
+          className="dp-glow"
           style={{
             position: 'absolute',
-            left: -13,
-            top: -13,
-            width: 26,
-            height: 26,
+            left: -30,
+            top: -30,
+            width: 60,
+            height: 60,
             borderRadius: '50%',
-            border: `1.5px solid ${color}`,
-            opacity: 0.35,
-            animation: 'drop-reticle-pulse 2s ease-in-out infinite',
+            background: `radial-gradient(circle, ${color}25 0%, ${color}0a 50%, transparent 72%)`,
+            animation: 'dp-glow-pulse 2s ease-in-out infinite',
           }}
         />
 
-        {/* Shadow ellipse — sits on the map surface, stationary while pin bobs */}
+        {/* Ground shadow: where the pin will rest */}
         <div
-          className="drop-preview-shadow"
+          className="dp-shadow"
           style={{
             position: 'absolute',
-            left: -11,
-            top: -2,
-            width: 22,
+            left: -16,
+            top: -4,
+            width: 32,
+            height: 10,
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.2)',
+            filter: 'blur(5px)',
+            animation: 'dp-shadow-breathe 1.6s ease-in-out infinite',
+          }}
+        />
+
+        {/* Reticle ring: dashed circle marking the landing zone */}
+        <div
+          className="dp-reticle"
+          style={{
+            position: 'absolute',
+            left: -15,
+            top: -15,
+            width: 30,
+            height: 30,
+            borderRadius: '50%',
+            border: `1.5px dashed ${color}`,
+            opacity: 0.5,
+            animation: 'dp-reticle-pulse 2s ease-in-out infinite',
+          }}
+        />
+
+        {/* Center dot: exact drop point */}
+        <div
+          className="dp-dot"
+          style={{
+            position: 'absolute',
+            left: -3,
+            top: -3,
+            width: 6,
             height: 6,
             borderRadius: '50%',
-            background: 'rgba(0,0,0,0.18)',
-            filter: 'blur(3px)',
+            backgroundColor: color,
+            opacity: 0.6,
           }}
         />
 
-        {/* Pin thumbnail — mirrors PhotoPin's img styling exactly */}
-        {photo ? (
-          <div
-            className="drop-preview-pin"
-            style={{
-              position: 'absolute',
-              left: -16,
-              top: -16,
-              width: 32,
-              height: 32,
-              animation: 'drop-bob 1.5s ease-in-out infinite',
-            }}
-          >
-            <img
-              src={photo.file_url}
-              alt=""
-              draggable={false}
-              className="drop-preview-img"
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 6,
-                objectFit: 'cover',
-                border: '2px solid white',
-                outline: `2px solid ${color}`,
-                boxShadow: `0 0 12px ${color}40, 0 2px 8px rgba(0,0,0,0.3)`,
-              }}
-            />
-          </div>
-        ) : (
-          <div
-            className="drop-preview-pin"
-            style={{
-              position: 'absolute',
-              left: -14,
-              top: -14,
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              background: 'white',
-              border: '2px solid #3b82f6',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              animation: 'drop-bob 1.5s ease-in-out infinite',
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1v12M1 7h12" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </div>
-        )}
-
         <style>{`
-          @keyframes drop-appear {
-            from { opacity: 0; }
-            to   { opacity: 1; }
+          @keyframes dp-appear {
+            from { opacity: 0; transform: scale(0.6); }
+            to   { opacity: 1; transform: scale(1); }
           }
-          @keyframes drop-bob {
-            0%, 100% { transform: translateY(0) scale(1); }
-            50%      { transform: translateY(-3px) scale(1.03); }
+          @keyframes dp-glow-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50%      { transform: scale(1.1); opacity: 1; }
           }
-          @keyframes drop-reticle-pulse {
-            0%, 100% { transform: scale(1); opacity: 0.35; }
-            50%      { transform: scale(1.2); opacity: 0.5; }
+          @keyframes dp-shadow-breathe {
+            0%, 100% { transform: scaleX(1); opacity: 0.2; }
+            50%      { transform: scaleX(1.25); opacity: 0.12; }
+          }
+          @keyframes dp-reticle-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50%      { transform: scale(1.12); opacity: 0.7; }
           }
 
-          /* --- Dropping crossfade: pin settles + fades as real PhotoPin appears beneath --- */
-          .drop-preview-root[data-dropping="true"] {
-            transition: opacity 200ms ease-out;
+          /* --- Dropping: fade out as real pin appears --- */
+          .dp-root[data-dropping="true"] {
+            transition: opacity 220ms ease-out;
             opacity: 0 !important;
             animation: none !important;
           }
-          .drop-preview-root[data-dropping="true"] .drop-preview-pin {
+          .dp-root[data-dropping="true"] .dp-reticle,
+          .dp-root[data-dropping="true"] .dp-dot {
             animation: none !important;
-            transition: transform 200ms ease-out;
-            transform: translateY(2px) scale(0.97) !important;
-          }
-          .drop-preview-root[data-dropping="true"] .drop-preview-reticle {
-            animation: none !important;
-            transition: opacity 200ms ease-out, transform 200ms ease-out;
+            transition: opacity 180ms ease-out, transform 180ms ease-out;
             opacity: 0 !important;
-            transform: scale(0.8) !important;
+            transform: scale(0.7) !important;
+          }
+          .dp-root[data-dropping="true"] .dp-shadow,
+          .dp-root[data-dropping="true"] .dp-glow {
+            animation: none !important;
+            transition: opacity 180ms ease-out;
+            opacity: 0 !important;
           }
 
-          /* --- Invalid zone: outside the floorplan image bounds --- */
-          .drop-preview-root[data-valid="false"] .drop-preview-img {
-            opacity: 0.4;
-            outline-color: #ef4444 !important;
-          }
-          .drop-preview-root[data-valid="false"] .drop-preview-reticle {
+          /* --- Invalid zone: outside floorplan image bounds --- */
+          .dp-root[data-valid="false"] .dp-reticle {
             border-color: #ef4444 !important;
-            opacity: 0.5;
+            opacity: 0.6 !important;
           }
-          .drop-preview-root[data-valid="false"] .drop-preview-shadow {
-            opacity: 0.08;
+          .dp-root[data-valid="false"] .dp-dot {
+            background-color: #ef4444 !important;
+          }
+          .dp-root[data-valid="false"] .dp-glow {
+            opacity: 0 !important;
+          }
+          .dp-root[data-valid="false"] .dp-shadow {
+            opacity: 0.06 !important;
           }
         `}</style>
       </div>
