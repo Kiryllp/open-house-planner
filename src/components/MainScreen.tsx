@@ -38,6 +38,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [leftPaneDragPhoto, setLeftPaneDragPhoto] = useState<Photo | null>(null)
+  const [ghostDropping, setGhostDropping] = useState(false)
+  const ghostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [tab, setTab] = useState<TopTab>('concept')
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
@@ -134,7 +136,12 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
   const handleDropOnMap = useCallback(
     async (photoId: string, xPct: number, yPct: number) => {
-      setLeftPaneDragPhoto(null)
+      setGhostDropping(true)
+      if (ghostTimerRef.current) clearTimeout(ghostTimerRef.current)
+      ghostTimerRef.current = setTimeout(() => {
+        setLeftPaneDragPhoto(null)
+        setGhostDropping(false)
+      }, 220)
       const usedColors = new Set(
         photos
           .filter((p) => p.pin_x != null && !p.deleted_at && p.color)
@@ -463,7 +470,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
         photos={visibleConcepts}
       />
 
-      {leftPaneDragPhoto && <DragGhost photo={leftPaneDragPhoto} />}
+      {leftPaneDragPhoto && <DragGhost photo={leftPaneDragPhoto} dropping={ghostDropping} />}
     </div>
   )
 }
