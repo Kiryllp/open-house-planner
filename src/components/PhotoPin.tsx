@@ -87,8 +87,9 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
   const tipX2 = Math.cos(dirRad + halfFov) * len
   const tipY2 = Math.sin(dirRad + halfFov) * len
 
-  const handleX = Math.cos(dirRad) * len
-  const handleY = Math.sin(dirRad) * len
+  const edgeDist = len * Math.cos(halfFov)
+  const handleX = Math.cos(dirRad) * edgeDist
+  const handleY = Math.sin(dirRad) * edgeDist
 
   const svgSize = len * 2 + 20
   const svgCenter = len + 10
