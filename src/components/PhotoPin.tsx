@@ -46,6 +46,15 @@ function usePinPointerHandler(handler: (e: PointerEvent) => void) {
 
 export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction }: PhotoPinProps) {
   const [hovered, setHovered] = useState(false)
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const onEnter = useCallback(() => {
+    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null }
+    setHovered(true)
+  }, [])
+  const onLeave = useCallback(() => {
+    leaveTimer.current = setTimeout(() => setHovered(false), 350)
+  }, [])
 
   const pinRef = usePinPointerHandler((e) => {
     e.stopPropagation()
@@ -93,8 +102,8 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
         touchAction: 'none',
       }}
       data-pin-id={photo.id}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
+      onPointerEnter={onEnter}
+      onPointerLeave={onLeave}
     >
       <svg
         className="absolute pointer-events-none"
@@ -136,6 +145,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
         <div
           ref={rotateRef}
           className="pin-handle"
+          onPointerEnter={onEnter}
           style={{
             position: 'absolute',
             left: '50%',
