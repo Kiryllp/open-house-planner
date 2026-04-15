@@ -101,6 +101,8 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
               ? crypto.randomUUID()
               : `upload-${Date.now()}-${Math.random()}`
 
+          const photoName = entry.file.name.replace(/\.[^.]+$/, '')
+
           if (entry.type === 'real') {
             const row: PhotoInsert = basePhoto({
               file_url: fileUrl,
@@ -109,6 +111,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
               zone_rank: null,
               source_upload_id: sourceUploadId,
               userName,
+              name: photoName,
             })
             const inserted = await insertPhotos([row])
             allInserted.push(...inserted)
@@ -121,6 +124,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
                 zone_rank: i + 1,
                 source_upload_id: sourceUploadId,
                 userName,
+                name: photoName,
               }),
             )
             const inserted = await insertPhotos(rows)
@@ -296,6 +300,7 @@ function basePhoto(args: {
   zone_rank: number | null
   source_upload_id: string
   userName: string
+  name: string | null
 }): PhotoInsert {
   return {
     file_url: args.file_url,
@@ -310,6 +315,7 @@ function basePhoto(args: {
     cone_length: 120,
     linked_real_id: null,
     color: null,
+    name: args.name,
     notes: null,
     tags: null,
     sort_order: null,

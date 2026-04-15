@@ -30,6 +30,9 @@ export interface Photo {
   // Must have a zone set to be useful.
   is_anchor: boolean
 
+  // Human-readable display name (defaults to original filename sans extension)
+  name: string | null
+
   // Misc
   color: string | null
   notes: string | null

@@ -62,6 +62,7 @@ function RealPhotoRow({
 }) {
   const [busy, setBusy] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [editName, setEditName] = useState(real.name ?? '')
 
   const linkedConcepts = useMemo(
     () => conceptPhotos.filter((c) => c.linked_real_id === real.id),
@@ -72,6 +73,15 @@ function RealPhotoRow({
     () => conceptPhotos.filter((c) => !c.linked_real_id),
     [conceptPhotos],
   )
+
+  const sortedUnlinked = useMemo(() => {
+    if (!real.zone) return unlinkedConcepts
+    return [...unlinkedConcepts].sort((a, b) => {
+      const aMatch = a.zone === real.zone ? 0 : 1
+      const bMatch = b.zone === real.zone ? 0 : 1
+      return aMatch - bMatch
+    })
+  }, [unlinkedConcepts, real.zone])
 
   async function handleChangeZone(zone: ZoneId) {
     if (busy) return
@@ -113,6 +123,22 @@ function RealPhotoRow({
     }
   }
 
+  async function handleSaveName() {
+    const trimmed = editName.trim()
+    const newName = trimmed || null
+    if (newName === (real.name ?? '')) return
+    if (busy) return
+    setBusy(true)
+    try {
+      await updatePhotoDb(real.id, { name: newName })
+      toast.success('Name saved')
+    } catch (err) {
+      toast.error((err as Error).message || 'Rename failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -132,6 +158,22 @@ function RealPhotoRow({
 
         {/* Right: controls */}
         <div className="flex flex-col gap-4 p-4">
+          {/* Name */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-700">
+              Name
+            </label>
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={handleSaveName}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              placeholder="Untitled"
+              className="w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-900 outline-none placeholder:text-gray-300 focus:border-blue-400 focus:bg-white"
+            />
+          </div>
+
           {/* Zone assignment */}
           <div>
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-700">
@@ -221,15 +263,16 @@ function RealPhotoRow({
           {pickerOpen && (
             <div>
               <div className="mb-1.5 text-xs font-medium text-gray-600">
-                Unlinked concepts ({unlinkedConcepts.length})
+                Unlinked concepts ({sortedUnlinked.length})
+                {real.zone && <span className="ml-1 text-gray-400">· same zone first</span>}
               </div>
-              {unlinkedConcepts.length === 0 ? (
+              {sortedUnlinked.length === 0 ? (
                 <div className="rounded border border-dashed border-gray-200 py-4 text-center text-xs text-gray-400">
                   All concepts are already linked.
                 </div>
               ) : (
                 <div className="grid max-h-[40vh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
-                  {unlinkedConcepts.map((concept) => (
+                  {sortedUnlinked.map((concept) => (
                     <button
                       type="button"
                       key={concept.id}

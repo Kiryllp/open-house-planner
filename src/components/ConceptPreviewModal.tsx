@@ -32,6 +32,7 @@ export function ConceptPreviewModal({
   const [busy, setBusy] = useState(false)
   const [showPicker, setShowPicker] = useState(!concept.linked_real_id)
   const [notes, setNotes] = useState(concept.notes ?? '')
+  const [editName, setEditName] = useState(concept.name ?? '')
 
   const linkedReal = useMemo(
     () => realPhotos.find((r) => r.id === concept.linked_real_id) ?? null,
@@ -89,6 +90,7 @@ export function ConceptPreviewModal({
         cone_length: 120,
         linked_real_id: null,
         color: null,
+        name: file.name.replace(/\.[^.]+$/, ''),
         notes: null,
         tags: null,
         sort_order: null,
@@ -149,8 +151,24 @@ export function ConceptPreviewModal({
     }
   }
 
+  async function handleSaveName() {
+    const trimmed = editName.trim()
+    const newName = trimmed || null
+    if (newName === (concept.name ?? '')) return
+    if (busy) return
+    setBusy(true)
+    try {
+      await updatePhotoDb(concept.id, { name: newName })
+      toast.success('Name saved')
+    } catch (err) {
+      toast.error((err as Error).message || 'Rename failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const isConcept = concept.type === 'concept'
-  const needsZone = isConcept && concept.zone == null
+  const needsZone = concept.zone == null
 
   return (
     <div
@@ -163,18 +181,27 @@ export function ConceptPreviewModal({
       >
         <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-900">
-              {isConcept ? 'Concept photo' : 'Real photo'}
-            </h2>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">
+              {isConcept ? 'Concept' : 'Real'}
+            </span>
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={handleSaveName}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              placeholder="Untitled"
+              className="min-w-0 flex-1 border-b border-transparent bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-300 focus:border-blue-400"
+            />
             {concept.zone ? (
               <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
                 Zone {concept.zone} · {zoneRankLabel(concept.zone_rank)}
               </span>
-            ) : isConcept ? (
+            ) : (
               <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                Needs zone
+                No zone
               </span>
-            ) : null}
+            )}
           </div>
           <button
             type="button"
@@ -203,37 +230,35 @@ export function ConceptPreviewModal({
 
           {/* RIGHT: controls, scrollable */}
           <div className="flex min-h-0 flex-col overflow-y-auto border-l border-gray-200">
-            {isConcept && (
-              <section className="border-b border-gray-100 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
-                    Zone
-                  </h3>
-                  {needsZone && (
-                    <span className="text-[10px] text-amber-600">
-                      Pick one to place this photo
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {ZONE_IDS.map((zone) => (
-                    <button
-                      type="button"
-                      key={zone}
-                      disabled={busy || zone === concept.zone}
-                      onClick={() => handleChangeZone(zone)}
-                      className={`rounded-md border px-3 py-1 text-xs font-medium transition ${
-                        zone === concept.zone
-                          ? 'border-blue-500 bg-blue-50 text-blue-700'
-                          : 'border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50'
-                      }`}
-                    >
-                      Zone {zone}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
+            <section className="border-b border-gray-100 p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                  Zone
+                </h3>
+                {needsZone && (
+                  <span className="text-[10px] text-amber-600">
+                    Pick one to assign this photo
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {ZONE_IDS.map((zone) => (
+                  <button
+                    type="button"
+                    key={zone}
+                    disabled={busy || zone === concept.zone}
+                    onClick={() => handleChangeZone(zone)}
+                    className={`rounded-md border px-3 py-1 text-xs font-medium transition ${
+                      zone === concept.zone
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50'
+                    }`}
+                  >
+                    Zone {zone}
+                  </button>
+                ))}
+              </div>
+            </section>
 
             <section className="border-b border-gray-100 p-4">
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-700">

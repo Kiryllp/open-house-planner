@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import type { TopTab } from '@/lib/store'
@@ -21,7 +21,8 @@ import { UploadDialog } from './UploadDialog'
 import { ConceptPreviewModal } from './ConceptPreviewModal'
 import { SimpleGallery } from './SimpleGallery'
 import { RealPhotosView } from './RealPhotosView'
-import { buildOriginalsZip, downloadBlob } from '@/lib/exportOriginalsZip'
+import { buildExportZip, downloadBlob } from '@/lib/exportOriginalsZip'
+import { ExportMapRenderer } from './ExportMapRenderer'
 
 interface Props {
   userName: string
@@ -39,6 +40,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const exportMapRef = useRef<HTMLDivElement>(null)
 
   // --- State updaters wired into realtime subscription ---------------
   const setPhotos = useCallback((next: Photo[]) => {
@@ -252,8 +254,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
     window.open('/export/print', '_blank', 'noopener')
   }, [])
 
-  // --- Export: Download Originals ZIP (client-side) ------------------
-  const handleDownloadOriginals = useCallback(async () => {
+  // --- Export: Project ZIP (client-side) -------------------------------
+  const handleExportProject = useCallback(async () => {
     if (downloading) return
     if (visibleConcepts.length === 0) {
       toast.error('No placed photos to export')
@@ -261,13 +263,24 @@ export function MainScreen({ userName, onChangeName }: Props) {
     }
     setDownloading(true)
     try {
-      const blob = await buildOriginalsZip(photos)
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-      downloadBlob(blob, `open-house-originals-${stamp}.zip`)
-      toast.success('Originals downloaded')
+      let mapBlob: Blob | null = null
+      if (exportMapRef.current) {
+        const { toPng } = await import('html-to-image')
+        const dataUrl = await toPng(exportMapRef.current, {
+          width: 1600,
+          height: 1067,
+          pixelRatio: 1,
+        })
+        const res = await fetch(dataUrl)
+        mapBlob = await res.blob()
+      }
+      const blob = await buildExportZip(photos, mapBlob)
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadBlob(blob, `open-house-export-${stamp}.zip`)
+      toast.success('Export downloaded')
     } catch (err) {
       console.error(err)
-      toast.error((err as Error).message || 'Download failed')
+      toast.error((err as Error).message || 'Export failed')
     } finally {
       setDownloading(false)
     }
@@ -299,7 +312,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
         onChangeName={handleChangeName}
         onUploadFiles={handleFiles}
         onPrintMap={handlePrintMap}
-        onDownloadOriginals={handleDownloadOriginals}
+        onDownloadOriginals={handleExportProject}
         downloading={downloading}
       />
 
@@ -402,6 +415,12 @@ export function MainScreen({ userName, onChangeName }: Props) {
           onClose={() => setPreviewPhotoId(null)}
         />
       )}
+
+      <ExportMapRenderer
+        ref={exportMapRef}
+        floorplanUrl={FLOORPLAN_URL}
+        photos={visibleConcepts}
+      />
     </div>
   )
 }

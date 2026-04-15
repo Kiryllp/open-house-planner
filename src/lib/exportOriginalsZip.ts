@@ -2,17 +2,21 @@ import JSZip from 'jszip'
 import type { Photo } from './types'
 
 /**
- * Build a print-handoff ZIP entirely in the browser:
+ * Build a polished export ZIP for the events team:
  *
- *   originals/<zone><rank>_<id>.<ext>   original image files
- *   manifest.json                        per-photo pin coords + zones
+ *   map.png                          rendered floorplan with numbered pins
+ *   legend.html                      visual key: pin# -> photo name, zone, notes
+ *   zone-1/01_photo_name.jpg         full-res originals organized by zone
+ *   zone-2/02_photo_name.jpg
+ *   unzoned/03_photo_name.jpg
  *
- * Only photos that are (a) not deleted, (b) type 'concept', and (c) placed
- * on the map (pin_x not null) are included — these are what the events team
- * actually uses. Duplicate file URLs are fetched only once.
+ * Only non-deleted concepts placed on the map are included.
  */
-export async function buildOriginalsZip(allPhotos: Photo[]): Promise<Blob> {
-  const used = allPhotos.filter(
+export async function buildExportZip(
+  allPhotos: Photo[],
+  mapPngBlob: Blob | null,
+): Promise<Blob> {
+  const placed = allPhotos.filter(
     (p) =>
       !p.deleted_at &&
       p.type === 'concept' &&
@@ -21,58 +25,127 @@ export async function buildOriginalsZip(allPhotos: Photo[]): Promise<Blob> {
   )
 
   const zip = new JSZip()
-  const folder = zip.folder('originals')!
+  const seenUrls = new Map<string, string>()
 
-  const seenUrls = new Map<string, string>() // url -> filename (shared across siblings)
-  const manifest: Array<Record<string, unknown>> = []
+  // Build numbered entries
+  const entries: Array<{
+    index: number
+    photo: Photo
+    folder: string
+    filename: string
+  }> = []
 
-  for (const photo of used) {
-    const filename = safeFilename(photo)
-    manifest.push({
-      id: photo.id,
-      filename,
-      zone: photo.zone,
-      zone_rank: photo.zone_rank,
-      pin_x: photo.pin_x,
-      pin_y: photo.pin_y,
-      direction_deg: photo.direction_deg,
-      fov_deg: photo.fov_deg,
-      cone_length: photo.cone_length,
-      source_upload_id: photo.source_upload_id,
-      linked_real_id: photo.linked_real_id,
-      notes: photo.notes,
-    })
+  for (let i = 0; i < placed.length; i++) {
+    const photo = placed[i]
+    const num = String(i + 1).padStart(2, '0')
+    const baseName = sanitizeFilename(photo.name || photo.id.slice(0, 8))
+    const ext = extractExt(photo.file_url)
+    const folder = photo.zone ? `zone-${photo.zone}` : 'unzoned'
+    const filename = `${num}_${baseName}.${ext}`
 
-    if (seenUrls.has(photo.file_url)) continue
-    seenUrls.set(photo.file_url, filename)
+    entries.push({ index: i + 1, photo, folder, filename })
+  }
+
+  // Download images into zone folders
+  for (const entry of entries) {
+    const subFolder = zip.folder(entry.folder)!
+    if (seenUrls.has(entry.photo.file_url)) continue
+    seenUrls.set(entry.photo.file_url, entry.filename)
 
     try {
-      const res = await fetch(photo.file_url)
+      const res = await fetch(entry.photo.file_url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
-      folder.file(filename, blob)
+      subFolder.file(entry.filename, blob)
     } catch (err) {
-      folder.file(
-        `${filename}.ERROR.txt`,
-        `Failed to fetch ${photo.file_url}: ${(err as Error).message}`,
+      subFolder.file(
+        `${entry.filename}.ERROR.txt`,
+        `Failed to fetch ${entry.photo.file_url}: ${(err as Error).message}`,
       )
     }
   }
 
-  zip.file(
-    'manifest.json',
-    JSON.stringify(
-      {
-        exportedAt: new Date().toISOString(),
-        photoCount: used.length,
-        photos: manifest,
-      },
-      null,
-      2,
-    ),
-  )
+  // Add map image
+  if (mapPngBlob) {
+    zip.file('map.png', mapPngBlob)
+  }
+
+  // Generate legend HTML
+  zip.file('legend.html', buildLegendHtml(entries))
 
   return zip.generateAsync({ type: 'blob' })
+}
+
+function buildLegendHtml(
+  entries: Array<{
+    index: number
+    photo: Photo
+    folder: string
+    filename: string
+  }>,
+): string {
+  const rows = entries
+    .map((e) => {
+      const name = e.photo.name || 'Untitled'
+      const zone = e.photo.zone ? `Zone ${e.photo.zone}` : 'Unzoned'
+      const notes = e.photo.notes
+        ? e.photo.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        : ''
+      return `
+      <tr>
+        <td class="num">${e.index}</td>
+        <td class="name">${name.replace(/</g, '&lt;')}</td>
+        <td>${zone}</td>
+        <td class="file">${e.folder}/${e.filename}</td>
+        <td class="notes">${notes}</td>
+      </tr>`
+    })
+    .join('\n')
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Open House Planner — Export Legend</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 2rem; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+  .meta { color: #666; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f5f5f5; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+  .num { text-align: center; font-weight: 700; width: 3rem; }
+  .name { font-weight: 500; }
+  .file { font-family: monospace; font-size: 0.8rem; color: #555; }
+  .notes { max-width: 300px; color: #666; }
+  tr:nth-child(even) { background: #fafafa; }
+</style>
+</head>
+<body>
+<h1>Open House Planner — Photo Legend</h1>
+<p class="meta">Exported ${new Date().toLocaleDateString()} · ${entries.length} photos · Pin numbers match map.png</p>
+<table>
+  <thead>
+    <tr><th class="num">#</th><th>Name</th><th>Zone</th><th>File</th><th>Notes</th></tr>
+  </thead>
+  <tbody>${rows}
+  </tbody>
+</table>
+</body>
+</html>`
+}
+
+function sanitizeFilename(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9_\- ]/g, '')
+    .replace(/\s+/g, '_')
+    .slice(0, 60)
+    || 'photo'
+}
+
+function extractExt(url: string): string {
+  const raw = url.split('?')[0].split('.').pop() ?? 'jpg'
+  return raw.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
@@ -84,12 +157,4 @@ export function downloadBlob(blob: Blob, filename: string) {
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
-}
-
-function safeFilename(photo: Photo): string {
-  const rawExt = photo.file_url.split('?')[0].split('.').pop() ?? 'jpg'
-  const ext = rawExt.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
-  const zonePart = photo.zone ? `z${photo.zone}` : 'nozone'
-  const rankPart = photo.zone_rank ? `r${photo.zone_rank}` : ''
-  return `${zonePart}${rankPart}_${photo.id.slice(0, 8)}.${ext}`
 }

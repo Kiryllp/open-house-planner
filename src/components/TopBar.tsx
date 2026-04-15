@@ -105,9 +105,9 @@ export function TopBar({
           onClick={onDownloadOriginals}
           disabled={downloading}
           className="rounded-md border border-gray-200 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          title="Download a ZIP of all placed original images + manifest"
+          title="Export a ZIP with map, legend, and full-res photos organized by zone"
         >
-          {downloading ? 'Zipping…' : 'Download Originals'}
+          {downloading ? 'Exporting…' : 'Export Project'}
         </button>
       </div>
     </header>
