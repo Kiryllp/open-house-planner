@@ -47,6 +47,37 @@ function usePinPointerHandler<T extends Element = HTMLDivElement>(handler: (e: P
   }, [])
 }
 
+/**
+ * Callback ref that attaches native pointerenter/pointerleave listeners.
+ * React synthetic events are unreliable on SVG children of a
+ * pointer-events:none parent, so we use native listeners instead.
+ */
+function useHoverRef<T extends Element>(
+  onEnterFn: () => void,
+  onLeaveFn: () => void,
+) {
+  const enterRef = useRef(onEnterFn)
+  enterRef.current = onEnterFn
+  const leaveRef = useRef(onLeaveFn)
+  leaveRef.current = onLeaveFn
+  const cleanupRef = useRef<(() => void) | null>(null)
+
+  return useCallback((el: T | null) => {
+    cleanupRef.current?.()
+    cleanupRef.current = null
+    if (!el) return
+
+    const enter = () => enterRef.current()
+    const leave = () => leaveRef.current()
+    el.addEventListener('pointerenter', enter)
+    el.addEventListener('pointerleave', leave)
+    cleanupRef.current = () => {
+      el.removeEventListener('pointerenter', enter)
+      el.removeEventListener('pointerleave', leave)
+    }
+  }, [])
+}
+
 export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onInteraction }: PhotoPinProps) {
   const [hovered, setHovered] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,6 +103,14 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
     e.preventDefault()
     onInteraction(e, 'rotate')
   })
+
+  const coneHoverRef = useHoverRef<SVGPolygonElement>(onEnter, onLeave)
+  const handleHoverRef = useHoverRef<SVGGElement>(onEnter, onLeave)
+
+  const handleGroupRef = useCallback((el: SVGGElement | null) => {
+    rotateRef(el)
+    handleHoverRef(el)
+  }, [rotateRef, handleHoverRef])
 
   if (photo.pin_x == null || photo.pin_y == null) return null
 
@@ -131,23 +170,20 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
           </filter>
         </defs>
         <polygon
+          ref={coneHoverRef}
           points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
           fill={`url(#cone-grad-${photo.id})`}
           stroke={color}
           strokeOpacity={selected ? 0.7 : 0.4}
           strokeWidth={selected ? 1.5 : 1}
           style={{ pointerEvents: 'auto', cursor: 'default' }}
-          onPointerEnter={onEnter}
-          onPointerLeave={onLeave}
         />
         {showHandle && (
           <g
-            ref={rotateRef}
+            ref={handleGroupRef}
             className="pin-handle"
             transform={`translate(${handleX + svgCenter}, ${handleY + svgCenter})`}
             style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
-            onPointerEnter={onEnter}
-            onPointerLeave={onLeave}
           >
             <circle r={14} fill="transparent" />
             <circle
