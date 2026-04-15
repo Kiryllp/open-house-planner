@@ -64,6 +64,7 @@ function RealPhotoRow({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [editName, setEditName] = useState(real.name ?? '')
   const [selectedForLink, setSelectedForLink] = useState<Set<string>>(new Set())
+  const [pickerSearch, setPickerSearch] = useState('')
 
   const linkedConcepts = useMemo(
     () => conceptPhotos.filter((c) => c.linked_real_id === real.id),
@@ -75,14 +76,27 @@ function RealPhotoRow({
     [conceptPhotos],
   )
 
-  const sortedUnlinked = useMemo(() => {
-    if (!real.zone) return unlinkedConcepts
-    return [...unlinkedConcepts].sort((a, b) => {
-      const aMatch = a.zone === real.zone ? 0 : 1
-      const bMatch = b.zone === real.zone ? 0 : 1
-      return aMatch - bMatch
+  const filteredUnlinked = useMemo(() => {
+    let list = unlinkedConcepts
+    if (pickerSearch.trim()) {
+      const q = pickerSearch.toLowerCase()
+      list = list.filter((c) => c.name?.toLowerCase().includes(q))
+    }
+    const realStem = (real.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
+    return [...list].sort((a, b) => {
+      const aName = (a.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
+      const bName = (b.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
+      const aStemMatch = realStem && aName.includes(realStem) ? 0 : 1
+      const bStemMatch = realStem && bName.includes(realStem) ? 0 : 1
+      if (aStemMatch !== bStemMatch) return aStemMatch - bStemMatch
+      if (real.zone) {
+        const aZone = a.zone === real.zone ? 0 : 1
+        const bZone = b.zone === real.zone ? 0 : 1
+        if (aZone !== bZone) return aZone - bZone
+      }
+      return (a.name ?? '').localeCompare(b.name ?? '')
     })
-  }, [unlinkedConcepts, real.zone])
+  }, [unlinkedConcepts, real.zone, real.name, pickerSearch])
 
   async function handleChangeZone(zone: ZoneId) {
     if (busy) return
@@ -236,7 +250,15 @@ function RealPhotoRow({
               </h3>
               <button
                 type="button"
-                onClick={() => setPickerOpen((v) => !v)}
+                onClick={() => {
+                  const opening = !pickerOpen
+                  setPickerOpen(opening)
+                  if (opening) {
+                    const stem = (real.name ?? '').replace(/_v\d+$/i, '')
+                    setPickerSearch(stem)
+                    setSelectedForLink(new Set())
+                  }
+                }}
                 className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-blue-700"
               >
                 {pickerOpen ? 'Close picker' : '+ Link concept'}
@@ -287,29 +309,50 @@ function RealPhotoRow({
           {/* Concept picker */}
           {pickerOpen && (
             <div>
+              <input
+                type="text"
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                placeholder="Search concepts by name..."
+                className="mb-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 outline-none placeholder:text-gray-400 focus:border-blue-400 focus:bg-white"
+              />
               <div className="mb-1.5 flex items-center justify-between">
                 <div className="text-xs font-medium text-gray-600">
-                  Unlinked concepts ({sortedUnlinked.length})
-                  {real.zone && <span className="ml-1 text-gray-400">· same zone first</span>}
+                  {filteredUnlinked.length} concepts
+                  {pickerSearch && ` matching "${pickerSearch}"`}
                 </div>
-                {selectedForLink.size > 0 && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={handleLinkSelected}
-                    className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    Link {selectedForLink.size} selected
-                  </button>
-                )}
+                <div className="flex gap-1.5">
+                  {filteredUnlinked.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setSelectedForLink(new Set(filteredUnlinked.map((c) => c.id)))
+                      }}
+                      className="rounded bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                    >
+                      Select all {filteredUnlinked.length}
+                    </button>
+                  )}
+                  {selectedForLink.size > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleLinkSelected}
+                      className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Link {selectedForLink.size} selected
+                    </button>
+                  )}
+                </div>
               </div>
-              {sortedUnlinked.length === 0 ? (
+              {filteredUnlinked.length === 0 ? (
                 <div className="rounded border border-dashed border-gray-200 py-4 text-center text-xs text-gray-400">
-                  All concepts are already linked.
+                  {unlinkedConcepts.length === 0 ? 'All concepts are already linked.' : 'No matches. Try a different search.'}
                 </div>
               ) : (
                 <div className="grid max-h-[40vh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
-                  {sortedUnlinked.map((concept) => {
+                  {filteredUnlinked.map((concept) => {
                     const isSelected = selectedForLink.has(concept.id)
                     return (
                       <button
