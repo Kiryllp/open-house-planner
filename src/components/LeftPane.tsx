@@ -226,7 +226,7 @@ function NoZoneSection({
 }: NoZoneSectionProps) {
   return (
     <div className="mb-5 border-b border-amber-100 pb-4">
-      <div className="mb-2 flex items-center justify-between px-4">
+      <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-white px-4 py-1">
         <div className="flex items-center gap-2">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
           <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">

@@ -172,11 +172,6 @@ export function ConceptPreviewModal({
 
   async function handleSaveCone() {
     if (busy) return
-    if (
-      direction === concept.direction_deg &&
-      fov === concept.fov_deg &&
-      coneLen === concept.cone_length
-    ) return
     setBusy(true)
     try {
       await updatePhotoDb(concept.id, {
@@ -184,7 +179,6 @@ export function ConceptPreviewModal({
         fov_deg: fov,
         cone_length: coneLen,
       })
-      toast.success('Cone updated')
     } catch (err) {
       toast.error((err as Error).message || 'Cone update failed')
     } finally {
@@ -299,6 +293,8 @@ export function ConceptPreviewModal({
                       max={360}
                       value={direction}
                       onChange={(e) => setDirection(Number(e.target.value))}
+                      onMouseUp={handleSaveCone}
+                      onTouchEnd={handleSaveCone}
                       className="flex-1"
                     />
                     <span className="w-8 text-right tabular-nums">{direction}°</span>
@@ -311,6 +307,8 @@ export function ConceptPreviewModal({
                       max={180}
                       value={fov}
                       onChange={(e) => setFov(Number(e.target.value))}
+                      onMouseUp={handleSaveCone}
+                      onTouchEnd={handleSaveCone}
                       className="flex-1"
                     />
                     <span className="w-8 text-right tabular-nums">{fov}°</span>
@@ -323,20 +321,12 @@ export function ConceptPreviewModal({
                       max={300}
                       value={coneLen}
                       onChange={(e) => setConeLen(Number(e.target.value))}
+                      onMouseUp={handleSaveCone}
+                      onTouchEnd={handleSaveCone}
                       className="flex-1"
                     />
                     <span className="w-8 text-right tabular-nums">{coneLen}</span>
                   </label>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={handleSaveCone}
-                      disabled={busy}
-                      className="rounded-md bg-gray-800 px-3 py-1 text-xs font-medium text-white hover:bg-gray-900 disabled:opacity-50"
-                    >
-                      Save cone
-                    </button>
-                  </div>
                 </div>
               </section>
             )}

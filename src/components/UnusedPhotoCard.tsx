@@ -63,8 +63,8 @@ export const UnusedPhotoCard = memo(function UnusedPhotoCard({
         </span>
       )}
 
-      {/* Duplicate dot */}
-      {isDuplicate && (
+      {/* Duplicate dot — hidden when Primary badge is showing */}
+      {isDuplicate && photo.zone_rank !== 1 && (
         <span
           className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-400 shadow"
           title="This file is placed in multiple zones"

@@ -37,7 +37,7 @@ export function ZoneSection({
       }}
       onDrop={(e) => onDropOnZone(e, zone)}
     >
-      <div className="mb-1.5 flex items-center justify-between px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+      <div className="sticky top-0 z-10 mb-1.5 flex items-center justify-between bg-white px-1 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
         <span>Zone {zone}</span>
         <span className="text-gray-400">{photos.length}</span>
       </div>

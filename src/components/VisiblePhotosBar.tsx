@@ -29,9 +29,14 @@ export function VisiblePhotosBar({ visiblePhotos, selectedId, onSelect, onRemove
               onClick={() => onSelect(photo.id)}
               className={`relative h-16 w-20 shrink-0 cursor-pointer overflow-hidden rounded border-2 bg-gray-50 ${
                 photo.id === selectedId
-                  ? 'border-blue-500'
-                  : 'border-transparent hover:border-gray-300'
+                  ? ''
+                  : 'hover:opacity-80'
               }`}
+              style={{
+                borderColor: photo.id === selectedId
+                  ? (photo.color || '#a855f7')
+                  : (photo.color ? photo.color + '80' : 'transparent'),
+              }}
             >
               <img
                 src={photo.file_url}

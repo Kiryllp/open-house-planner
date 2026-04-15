@@ -45,6 +45,12 @@ export interface Photo {
 
 export const ZONE_IDS: ZoneId[] = [1, 2, 3, 4, 5, 6]
 
+export const PIN_COLORS = [
+  '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
+  '#1abc9c', '#e67e22', '#2980b9', '#27ae60', '#c0392b',
+  '#8e44ad', '#d35400', '#16a085', '#f1c40f', '#e84393',
+]
+
 export function zoneRankLabel(rank: number | null | undefined): string {
   if (!rank || rank < 1) return ''
   if (rank === 1) return 'Primary'

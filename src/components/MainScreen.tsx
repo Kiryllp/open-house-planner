@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
+import { PIN_COLORS } from '@/lib/types'
 import type { TopTab } from '@/lib/store'
 import { useSupabaseData } from '@/lib/useSupabaseData'
 import {
@@ -125,14 +126,24 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
   const handleDropOnMap = useCallback(
     async (photoId: string, xPct: number, yPct: number) => {
-      updatePhoto(photoId, { pin_x: xPct, pin_y: yPct })
+      const usedColors = new Set(
+        photos
+          .filter((p) => p.pin_x != null && !p.deleted_at && p.color)
+          .map((p) => p.color),
+      )
+      const nextColor =
+        PIN_COLORS.find((c) => !usedColors.has(c)) ??
+        PIN_COLORS[photos.filter((p) => p.pin_x != null).length % PIN_COLORS.length]
+
+      updatePhoto(photoId, { pin_x: xPct, pin_y: yPct, color: nextColor })
       try {
         await placePhotoOnMap(photoId, xPct, yPct)
+        await updatePhotoDb(photoId, { color: nextColor })
       } catch (err) {
         toast.error((err as Error).message || 'Could not place photo')
       }
     },
-    [updatePhoto],
+    [updatePhoto, photos],
   )
 
   const handleDropFilesOnMap = useCallback(

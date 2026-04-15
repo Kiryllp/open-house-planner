@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { memo } from 'react'
 import type { Photo } from '@/lib/types'
@@ -80,17 +81,21 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMou
         )}
       </svg>
 
-      {/* Pin circle */}
-      <div
+      {/* Pin thumbnail */}
+      <img
+        src={photo.file_url}
+        alt=""
+        draggable={false}
         className="pin-element relative cursor-pointer transition-transform duration-150 group-hover:scale-110"
         style={{
-          width: 20,
-          height: 20,
-          borderRadius: '50%',
-          backgroundColor: color,
+          width: 32,
+          height: 32,
+          borderRadius: 6,
+          objectFit: 'cover',
           border: selected ? '3px solid white' : '2px solid white',
+          outline: `2px solid ${color}`,
           boxShadow: selected
-            ? `0 0 0 2px ${color}, 0 0 12px ${color}40, 0 2px 8px rgba(0,0,0,0.3)`
+            ? `0 0 12px ${color}40, 0 2px 8px rgba(0,0,0,0.3)`
             : '0 1px 4px rgba(0,0,0,0.3)',
           zIndex: 2,
         }}

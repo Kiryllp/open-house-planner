@@ -35,9 +35,13 @@ export function TopBar({
   return (
     <header className="flex h-14 items-center justify-between border-b border-gray-200 bg-white px-5 shadow-sm">
       <div className="flex items-center gap-5">
-        <h1 className="text-base font-semibold tracking-tight text-gray-900">
-          Open House Planner
-        </h1>
+        <button
+          type="button"
+          onClick={() => onChangeTab('concept')}
+          className="text-base font-semibold tracking-tight text-gray-900 hover:text-blue-700 transition-colors"
+        >
+          Bastrop Planner
+        </button>
         <button
           type="button"
           onClick={onChangeName}
