@@ -55,11 +55,18 @@ const DEFAULT_HEIGHT = 1400
 const PHOTO_FETCH_CONCURRENCY = 5
 
 // Pin thumbnail visual dimensions, in canvas pixels (the canvas is
-// 2000×1400 by default, so these are about 6% of canvas width).
-const THUMB_SIZE = 120
-const THUMB_RADIUS = 12
+// 2000×1400 by default, so these are about 4% of canvas width). Kept
+// small enough that direction cones clearly extend past the thumbnail
+// edge on every floorplan aspect ratio.
+const THUMB_SIZE = 88
+const THUMB_RADIUS = 10
 const THUMB_BORDER = 4
-const BADGE_RADIUS = 18
+const BADGE_RADIUS = 16
+
+// Direction-cone length for the exported map. Scaled to the canvas
+// (not the floorplan inset) so wide floorplans don't end up with cones
+// shorter than the thumbnail's half-width.
+const CONE_LENGTH_RATIO = 0.09
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -338,9 +345,10 @@ function drawPinThumbnail(
   ctx.fillStyle = pin.color
   ctx.fill()
 
-  // Number text.
+  // Number text — sized to the BADGE_RADIUS so digits fit inside the
+  // smaller circle without touching the white ring.
   ctx.fillStyle = '#ffffff'
-  ctx.font = 'bold 20px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif'
+  ctx.font = 'bold 18px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(pin.label, badgeCx, badgeCy + 1)
@@ -394,7 +402,13 @@ export async function renderMapToPng(
     ctx.fillText('No floorplan configured', width / 2, height / 2)
   }
 
-  const pins = layoutMapPins(opts.photos, width, height, floorplanBounds)
+  const pins = layoutMapPins(
+    opts.photos,
+    width,
+    height,
+    floorplanBounds,
+    Math.min(width, height) * CONE_LENGTH_RATIO,
+  )
 
   // Fetch concept thumbnails in parallel before drawing. Shared cache by
   // file_url so multi-zone duplicates only fetch once.
