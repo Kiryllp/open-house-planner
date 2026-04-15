@@ -29,7 +29,10 @@ interface Props {
   photos?: Photo[]
 }
 
-type IconComponent = (props: { size?: number; className?: string }) => React.JSX.Element
+// All lucide-react icons share this type, so `typeof Upload` works as
+// the shared icon type without pulling in LucideIcon (not always exported
+// depending on the lucide-react version).
+type IconComponent = typeof Upload
 
 const EVENT_META: Record<
   PhotoHistoryEventType,

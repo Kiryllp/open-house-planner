@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo } from '@/lib/types'
 import { renderMapToPng } from '@/lib/mapRender'
+import { sortPlacedPhotosForExport } from '@/lib/exportSort'
 import {
   buildExportZip,
   downloadBlob,
@@ -49,6 +50,7 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
   const [includePdf, setIncludePdf] = useState(true)
   const [includeAll, setIncludeAll] = useState(true)
   const [includeZones, setIncludeZones] = useState(true)
+  const [includeIndex, setIncludeIndex] = useState(true)
   const [includeFullsize, setIncludeFullsize] = useState(false)
 
   const [progress, setProgress] = useState<ProgressState>({
@@ -65,30 +67,29 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
 
   const abortRef = useRef<AbortController | null>(null)
 
+  // Zone-sorted list of placed concepts. All downstream consumers
+  // (map render, PDF builder, ZIP) derive pin numbers from this array's
+  // order, so sorting once here is enough to renumber everything.
   const placed = useMemo(
     () =>
-      photos.filter(
-        (p) =>
-          !p.deleted_at &&
-          p.type === 'concept' &&
-          p.pin_x != null &&
-          p.pin_y != null,
+      sortPlacedPhotosForExport(
+        photos.filter(
+          (p) =>
+            !p.deleted_at &&
+            p.type === 'concept' &&
+            p.pin_x != null &&
+            p.pin_y != null,
+        ),
       ),
     [photos],
   )
 
-  // Zone breakdown for the summary line.
-  const zoneBreakdown = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const p of placed) {
-      const k = p.zone ? `Zone ${p.zone}` : 'Unzoned'
-      counts.set(k, (counts.get(k) ?? 0) + 1)
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('  \u00B7  ')
-  }, [placed])
+  // Real photos the PDF index table may need to look up via
+  // linked_real_id. Soft-deleted reals are excluded.
+  const realPhotos = useMemo(
+    () => photos.filter((p) => p.type === 'real' && !p.deleted_at),
+    [photos],
+  )
 
   // Abort any in-flight export on unmount.
   useEffect(() => {
@@ -145,7 +146,9 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
         })
         mapPdf = await buildMapPdf({
           placedPhotos: placed,
+          realPhotos,
           mapPng: rendered.blob,
+          includeIndex,
           includeFullsize,
           signal: ac.signal,
           onProgress: (done, total, label) => {
@@ -233,9 +236,11 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
     canStart,
     floorplanUrl,
     placed,
+    realPhotos,
     includePdf,
     includeAll,
     includeZones,
+    includeIndex,
     includeFullsize,
   ])
 
@@ -301,6 +306,13 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
               hint="Zone-1/, Zone-2/, ... Unzoned/"
             />
             <Option
+              checked={includeIndex && includePdf}
+              onChange={setIncludeIndex}
+              disabled={!includePdf}
+              label="Include photo index table"
+              hint="One row per placed concept with filename, zone, and concept + linked-real preview"
+            />
+            <Option
               checked={includeFullsize && includePdf}
               onChange={setIncludeFullsize}
               disabled={!includePdf}
@@ -309,21 +321,11 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
             />
           </fieldset>
 
-          {/* Summary */}
-          <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-            {placed.length === 0 ? (
-              <span className="text-amber-700">No placed photos to export</span>
-            ) : (
-              <>
-                <div className="font-medium text-gray-800">
-                  {placed.length} placed photo{placed.length === 1 ? '' : 's'}
-                </div>
-                {zoneBreakdown && (
-                  <div className="mt-0.5">{zoneBreakdown}</div>
-                )}
-              </>
-            )}
-          </div>
+          {placed.length === 0 && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              No placed photos to export
+            </div>
+          )}
 
           {/* Progress */}
           {(running ||

@@ -3,24 +3,32 @@ import {
   fetchImage,
   getPdfBytes,
   type FetchedImage,
-  type PdfEmbeddable,
 } from './imageThumb'
 import { fitImageInBox } from './pinGeometry'
+import { extractExt } from './buildExportZip'
 
 /**
  * PDF builder for the export. Lays out:
  *
  *   Page 1           — cover + map (landscape US Letter)
- *   Pages 2..N       — 3×4 photo key grid (portrait US Letter)
- *   Pages N+1..M     — optional full-size reference pages (landscape)
+ *   Pages 2..X       — photo index table (portrait US Letter, optional)
+ *   Pages X+1..Y     — 3×4 photo key grid (portrait US Letter)
+ *   Pages Y+1..Z     — optional full-size reference pages (landscape)
  *
  * `pdf-lib` is imported dynamically at the top of this file so it lands
  * in a separate chunk and doesn't bloat the main bundle.
+ *
+ * Every photo URL is fetched exactly once per build; the resulting
+ * `PDFImage` handles are cached so the same concept thumbnail embedded
+ * in both the key grid and the index table only lives in the PDF once.
  */
 
 export interface BuildPdfOptions {
   placedPhotos: Photo[]
+  /** All non-deleted real photos; used to resolve `linked_real_id`. */
+  realPhotos: Photo[]
   mapPng: Blob
+  includeIndex: boolean
   includeFullsize: boolean
   onProgress?: (done: number, total: number, label: string) => void
   signal?: AbortSignal
@@ -45,11 +53,16 @@ const KEY_GUTTER_Y = 24
 const FULLSIZE_MARGIN = 36
 const FULLSIZE_CAPTION_H = 70
 
-// Key-grid thumbnail budget. ~100pt wide cell × ~4 rendering scale = 400px
-// minimum; 1200 gives PDF viewers room to zoom without the thumbnail
-// going soft. Quality 0.9 keeps file size reasonable.
+// Key-grid / index concept tier. Shared between the key grid and the
+// index table's concept preview column. One embed per unique URL.
 const KEY_THUMB_MAXDIM = 1200
 const KEY_THUMB_QUALITY = 0.9
+
+// Dedicated (smaller) tier for the linked-real preview in the index
+// table. Reals aren't shown anywhere else in the PDF, so they can be
+// modest.
+const INDEX_REAL_MAXDIM = 600
+const INDEX_REAL_QUALITY = 0.85
 
 // Full-size reference pages use the raw bytes whenever the original is
 // PNG or JPEG and no larger than 4000px on its longest side — which is
@@ -57,6 +70,18 @@ const KEY_THUMB_QUALITY = 0.9
 // larger gets a single JPEG re-encode at near-lossless quality.
 const FULLSIZE_MAXDIM = 4000
 const FULLSIZE_QUALITY = 0.92
+
+// Index table layout (portrait US Letter, 612 × 792).
+const INDEX_MARGIN = 40
+const INDEX_TOP_BAND = 70
+const INDEX_HEADER_H = 22
+const INDEX_ROW_H = 56
+const INDEX_COL_NUM_W = 28
+const INDEX_COL_NAME_W = 160
+const INDEX_COL_ZONE_W = 60
+const INDEX_PREVIEW_THUMB_W = 130
+const INDEX_PREVIEW_THUMB_H = 48
+const INDEX_PREVIEW_GAP = 6
 
 const FETCH_CONCURRENCY = 5
 
@@ -96,6 +121,17 @@ function zoneLabel(zone: number | null | undefined): string {
   return zone ? `Zone ${zone}` : 'Unzoned'
 }
 
+/**
+ * Original filename with extension, matching what the ZIP puts inside
+ * `All/` and `Zone-N/`. Falls back to an id-prefix slug when
+ * `photo.name` is null so the table never shows "Untitled".
+ */
+function originalFilename(photo: Photo): string {
+  const ext = extractExt(photo.file_url)
+  const base = photo.name?.trim() || photo.id.slice(0, 8)
+  return `${base}.${ext}`
+}
+
 /** Truncate `text` so it fits in `maxWidth` at `fontSize`, adding ".." on overflow. */
 function fitText(
   text: string,
@@ -121,6 +157,7 @@ function fitText(
 
 export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
+  type PDFImage = Awaited<ReturnType<typeof PDFDocument.prototype.embedPng>>
 
   const report = (done: number, total: number, label: string) => {
     opts.onProgress?.(done, total, label)
@@ -134,24 +171,57 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
   const mapBuf = await opts.mapPng.arrayBuffer()
   const mapImage = await pdf.embedPng(mapBuf)
 
-  // Pre-fetch every photo URL exactly once, then derive whatever the PDF
-  // needs from the cached FetchedImage (full resolution + raw bytes +
-  // dimensions). Two photos with the same file_url — e.g. a multi-zone
-  // concept — share a single fetch.
+  // ---- Fetch every image we need exactly once ---------------------------
+  //
+  // We fetch:
+  //   - every placed concept URL (for the key grid, the index table's
+  //     concept preview, and optional full-size reference pages)
+  //   - every linked-real URL that's reachable from a placed concept AND
+  //     refers to a non-deleted real row (for the index table's real
+  //     preview column)
+  //
+  // The fetched raw bytes + dimensions live in `imageByUrl`; downstream
+  // tiers derive pdf-lib byte arrays from the same FetchedImage without
+  // touching the network again.
   const total = opts.placedPhotos.length
+  const realsById = new Map<string, Photo>(
+    opts.realPhotos
+      .filter((r) => !r.deleted_at)
+      .map((r) => [r.id, r] as const),
+  )
+
+  const linkedRealUrls: string[] = []
+  const seenLinkedUrls = new Set<string>()
+  if (opts.includeIndex) {
+    for (const concept of opts.placedPhotos) {
+      if (!concept.linked_real_id) continue
+      const real = realsById.get(concept.linked_real_id)
+      if (!real) continue
+      if (seenLinkedUrls.has(real.file_url)) continue
+      seenLinkedUrls.add(real.file_url)
+      linkedRealUrls.push(real.file_url)
+    }
+  }
+
+  const uniqueConceptUrls = Array.from(
+    new Set(opts.placedPhotos.map((p) => p.file_url)),
+  )
+  const allUrlsToFetch = [...uniqueConceptUrls, ...linkedRealUrls]
+
   const imageByUrl = new Map<string, FetchedImage | null>()
   {
-    const uniqueUrls = Array.from(
-      new Set(opts.placedPhotos.map((p) => p.file_url)),
-    )
     let cursor = 0
     let doneCount = 0
-    report(0, uniqueUrls.length, `Fetching images (0/${uniqueUrls.length})`)
+    report(
+      0,
+      allUrlsToFetch.length,
+      `Fetching thumbnails (0/${allUrlsToFetch.length})`,
+    )
 
     const worker = async (): Promise<void> => {
-      while (cursor < uniqueUrls.length) {
+      while (cursor < allUrlsToFetch.length) {
         const idx = cursor++
-        const url = uniqueUrls[idx]
+        const url = allUrlsToFetch[idx]
         throwIfAborted(opts.signal)
         try {
           imageByUrl.set(url, await fetchImage(url, opts.signal))
@@ -163,34 +233,71 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
         doneCount++
         report(
           doneCount,
-          uniqueUrls.length,
-          `Fetching images (${doneCount}/${uniqueUrls.length})`,
+          allUrlsToFetch.length,
+          `Fetching thumbnails (${doneCount}/${allUrlsToFetch.length})`,
         )
       }
     }
 
     const workers: Array<Promise<void>> = []
-    for (let i = 0; i < Math.min(FETCH_CONCURRENCY, uniqueUrls.length); i++) {
+    for (
+      let i = 0;
+      i < Math.min(FETCH_CONCURRENCY, allUrlsToFetch.length);
+      i++
+    ) {
       workers.push(worker())
     }
     await Promise.all(workers)
   }
 
-  // Derive the key-grid thumbnails. These are small, so per-photo cost
-  // is modest even for ~100-photo projects.
-  report(0, total, `Preparing key thumbnails (0/${total})`)
-  const keyThumbs: Array<PdfEmbeddable | null> = new Array(total).fill(null)
-  for (let i = 0; i < total; i++) {
-    throwIfAborted(opts.signal)
-    const photo = opts.placedPhotos[i]
-    const img = imageByUrl.get(photo.file_url)
-    if (!img) continue
-    try {
-      keyThumbs[i] = await getPdfBytes(img, KEY_THUMB_MAXDIM, KEY_THUMB_QUALITY)
-    } catch (err) {
-      console.warn('Key thumbnail prep failed', err)
+  // ---- PDFImage handle cache --------------------------------------------
+  //
+  // pdf-lib does NOT dedupe image XObjects by byte content: calling
+  // `embedJpg(bytes)` twice produces two copies in the PDF. We cache the
+  // PDFImage handle per `url|tier` key so the key grid, the index table,
+  // and the optional full-size page reuse a single embed per tier.
+  const embedCache = new Map<string, PDFImage | null>()
+
+  async function embedForTier(
+    url: string,
+    tier: 'concept' | 'real' | 'fullsize',
+  ): Promise<PDFImage | null> {
+    const key = `${tier}|${url}`
+    if (embedCache.has(key)) return embedCache.get(key)!
+    const img = imageByUrl.get(url)
+    if (!img) {
+      embedCache.set(key, null)
+      return null
     }
-    report(i + 1, total, `Preparing key thumbnails (${i + 1}/${total})`)
+    let maxDim: number
+    let quality: number
+    switch (tier) {
+      case 'concept':
+        maxDim = KEY_THUMB_MAXDIM
+        quality = KEY_THUMB_QUALITY
+        break
+      case 'real':
+        maxDim = INDEX_REAL_MAXDIM
+        quality = INDEX_REAL_QUALITY
+        break
+      case 'fullsize':
+        maxDim = FULLSIZE_MAXDIM
+        quality = FULLSIZE_QUALITY
+        break
+    }
+    try {
+      const bytes = await getPdfBytes(img, maxDim, quality)
+      const handle =
+        bytes.mime === 'image/png'
+          ? await pdf.embedPng(bytes.bytes)
+          : await pdf.embedJpg(bytes.bytes)
+      embedCache.set(key, handle)
+      return handle
+    } catch (err) {
+      console.warn(`Embed failed for ${tier} ${url}`, err)
+      embedCache.set(key, null)
+      return null
+    }
   }
 
   // ---- Cover + Map page --------------------------------------------------
@@ -256,6 +363,205 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
     )
   }
 
+  // ---- Photo index table pages (optional) -------------------------------
+  if (opts.includeIndex && total > 0) {
+    // Compute column x-offsets once — the table area is fixed width.
+    const contentW = LETTER_SHORT - INDEX_MARGIN * 2
+    const numX = INDEX_MARGIN
+    const nameX = numX + INDEX_COL_NUM_W
+    const zoneX = nameX + INDEX_COL_NAME_W
+    const previewX = zoneX + INDEX_COL_ZONE_W
+
+    // How many rows can we fit per page?
+    const rowAreaTopY = LETTER_LONG - INDEX_TOP_BAND - INDEX_HEADER_H
+    const usableRowH = rowAreaTopY - INDEX_MARGIN
+    const rowsPerPage = Math.max(1, Math.floor(usableRowH / INDEX_ROW_H))
+    const indexPageCount = Math.max(1, Math.ceil(total / rowsPerPage))
+
+    for (let pageIdx = 0; pageIdx < indexPageCount; pageIdx++) {
+      throwIfAborted(opts.signal)
+      report(
+        pageIdx + 1,
+        indexPageCount,
+        `Drawing index table (${pageIdx + 1}/${indexPageCount})`,
+      )
+
+      const page = pdf.addPage([LETTER_SHORT, LETTER_LONG])
+      const pageH = page.getHeight()
+
+      // Title band
+      page.drawText('Photo Index', {
+        x: INDEX_MARGIN,
+        y: pageH - 48,
+        size: 18,
+        font: helvBold,
+        color: rgb(0.1, 0.12, 0.16),
+      })
+      page.drawText(
+        sanitizeText(
+          `Page ${pageIdx + 1} of ${indexPageCount}  \u00B7  ${total} photo${total === 1 ? '' : 's'} indexed`,
+        ),
+        {
+          x: INDEX_MARGIN,
+          y: pageH - 64,
+          size: 9,
+          font: helv,
+          color: rgb(0.5, 0.52, 0.56),
+        },
+      )
+
+      // Column header row
+      const headerY = pageH - INDEX_TOP_BAND
+      page.drawRectangle({
+        x: INDEX_MARGIN,
+        y: headerY - INDEX_HEADER_H,
+        width: contentW,
+        height: INDEX_HEADER_H,
+        color: rgb(0.95, 0.96, 0.98),
+        borderColor: rgb(0.85, 0.87, 0.9),
+        borderWidth: 0.5,
+      })
+      const drawHeader = (label: string, x: number) => {
+        page.drawText(label, {
+          x: x + 6,
+          y: headerY - INDEX_HEADER_H + 7,
+          size: 9,
+          font: helvBold,
+          color: rgb(0.3, 0.32, 0.36),
+        })
+      }
+      drawHeader('#', numX)
+      drawHeader('FILENAME', nameX)
+      drawHeader('ZONE', zoneX)
+      drawHeader('PREVIEW  (concept / real)', previewX)
+
+      // Rows
+      const firstRow = pageIdx * rowsPerPage
+      const lastRow = Math.min(firstRow + rowsPerPage, total)
+      for (let i = firstRow; i < lastRow; i++) {
+        throwIfAborted(opts.signal)
+        const photo = opts.placedPhotos[i]
+        const rowIdxInPage = i - firstRow
+        const rowTopY = headerY - INDEX_HEADER_H - rowIdxInPage * INDEX_ROW_H
+        const rowBottomY = rowTopY - INDEX_ROW_H
+
+        // Row separator line
+        page.drawLine({
+          start: { x: INDEX_MARGIN, y: rowBottomY },
+          end: { x: INDEX_MARGIN + contentW, y: rowBottomY },
+          thickness: 0.5,
+          color: rgb(0.9, 0.92, 0.94),
+        })
+
+        // # badge
+        const [r, g, b] = hexToRgb(photo.color)
+        const badgeCx = numX + INDEX_COL_NUM_W / 2
+        const badgeCy = rowBottomY + INDEX_ROW_H / 2
+        page.drawCircle({
+          x: badgeCx,
+          y: badgeCy,
+          size: 10,
+          color: rgb(r, g, b),
+        })
+        const label = String(i + 1)
+        const labelSize = label.length <= 2 ? 9 : 7
+        const labelW = helvBold.widthOfTextAtSize(label, labelSize)
+        page.drawText(label, {
+          x: badgeCx - labelW / 2,
+          y: badgeCy - labelSize / 2 + 1,
+          size: labelSize,
+          font: helvBold,
+          color: rgb(1, 1, 1),
+        })
+
+        // Filename
+        const filenameText = fitText(
+          sanitizeText(originalFilename(photo)),
+          helv,
+          10,
+          INDEX_COL_NAME_W - 12,
+        )
+        page.drawText(filenameText, {
+          x: nameX + 6,
+          y: badgeCy - 4,
+          size: 10,
+          font: helv,
+          color: rgb(0.12, 0.14, 0.18),
+        })
+
+        // Zone
+        const zoneText = zoneLabel(photo.zone)
+        page.drawText(zoneText, {
+          x: zoneX + 6,
+          y: badgeCy - 4,
+          size: 10,
+          font: helvBold,
+          color: rgb(r, g, b),
+        })
+
+        // Preview: concept thumbnail + linked-real thumbnail side by side
+        const previewTopY = rowBottomY + (INDEX_ROW_H - INDEX_PREVIEW_THUMB_H) / 2
+        const conceptBoxX = previewX + 6
+        const realBoxX = conceptBoxX + INDEX_PREVIEW_THUMB_W + INDEX_PREVIEW_GAP
+
+        // Concept thumb (reuses the same PDFImage handle as the key grid)
+        const conceptHandle = await embedForTier(photo.file_url, 'concept')
+        drawThumbInBox(
+          page,
+          conceptHandle,
+          conceptBoxX,
+          previewTopY,
+          INDEX_PREVIEW_THUMB_W,
+          INDEX_PREVIEW_THUMB_H,
+          rgb,
+          helv,
+          '(image unavailable)',
+        )
+
+        // Linked real thumb (or placeholder)
+        const linkedReal = photo.linked_real_id
+          ? realsById.get(photo.linked_real_id) ?? null
+          : null
+        const realHandle = linkedReal
+          ? await embedForTier(linkedReal.file_url, 'real')
+          : null
+        if (realHandle) {
+          drawThumbInBox(
+            page,
+            realHandle,
+            realBoxX,
+            previewTopY,
+            INDEX_PREVIEW_THUMB_W,
+            INDEX_PREVIEW_THUMB_H,
+            rgb,
+            helv,
+            '(image unavailable)',
+          )
+        } else {
+          // Placeholder with "no real linked"
+          page.drawRectangle({
+            x: realBoxX,
+            y: previewTopY,
+            width: INDEX_PREVIEW_THUMB_W,
+            height: INDEX_PREVIEW_THUMB_H,
+            color: rgb(0.95, 0.96, 0.97),
+            borderColor: rgb(0.85, 0.87, 0.9),
+            borderWidth: 0.5,
+          })
+          const placeholder = 'no real linked'
+          const tw = helv.widthOfTextAtSize(placeholder, 7)
+          page.drawText(placeholder, {
+            x: realBoxX + (INDEX_PREVIEW_THUMB_W - tw) / 2,
+            y: previewTopY + INDEX_PREVIEW_THUMB_H / 2 - 2,
+            size: 7,
+            font: helv,
+            color: rgb(0.55, 0.57, 0.6),
+          })
+        }
+      }
+    }
+  }
+
   // ---- Photo key pages ---------------------------------------------------
   throwIfAborted(opts.signal)
   const perPage = KEY_COLS * KEY_ROWS
@@ -309,7 +615,6 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
       if (photoIdx >= total) break
 
       const photo = opts.placedPhotos[photoIdx]
-      const thumb = keyThumbs[photoIdx]
       const col = slot % KEY_COLS
       const row = Math.floor(slot / KEY_COLS)
 
@@ -333,28 +638,22 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
         color: rgb(0.98, 0.98, 0.99),
       })
 
-      // Embed thumbnail if we got it.
-      if (thumb) {
-        try {
-          const embedded =
-            thumb.mime === 'image/png'
-              ? await pdf.embedPng(thumb.bytes)
-              : await pdf.embedJpg(thumb.bytes)
-          const fit = fitImageInBox(
-            embedded.width,
-            embedded.height,
-            imgAreaW - 8,
-            imgAreaH - 8,
-          )
-          page.drawImage(embedded, {
-            x: imgAreaLeft + 4 + fit.x,
-            y: imgAreaBottom + 4 + fit.y,
-            width: fit.w,
-            height: fit.h,
-          })
-        } catch (err) {
-          console.warn('Embed failed for key thumbnail', err)
-        }
+      // Embed thumbnail if we got it. Reuses the same PDFImage handle as
+      // the index table — zero extra XObjects.
+      const handle = await embedForTier(photo.file_url, 'concept')
+      if (handle) {
+        const fit = fitImageInBox(
+          handle.width,
+          handle.height,
+          imgAreaW - 8,
+          imgAreaH - 8,
+        )
+        page.drawImage(handle, {
+          x: imgAreaLeft + 4 + fit.x,
+          y: imgAreaBottom + 4 + fit.y,
+          width: fit.w,
+          height: fit.h,
+        })
       } else {
         page.drawRectangle({
           x: imgAreaLeft + 4,
@@ -463,40 +762,19 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
         `Drawing full-size pages (${i + 1}/${total})`,
       )
       const photo = opts.placedPhotos[i]
-      const img = imageByUrl.get(photo.file_url)
-      if (!img) continue
-
-      // Derive high-quality bytes per-photo so we don't hold every
-      // decoded full-size image in memory at once.
-      let fullsize: PdfEmbeddable
-      try {
-        fullsize = await getPdfBytes(img, FULLSIZE_MAXDIM, FULLSIZE_QUALITY)
-      } catch (err) {
-        console.warn('Fullsize prep failed', err)
-        continue
-      }
+      const handle = await embedForTier(photo.file_url, 'fullsize')
+      if (!handle) continue
 
       const page = pdf.addPage([LETTER_LONG, LETTER_SHORT])
       const pageW = page.getWidth()
       const pageH = page.getHeight()
 
-      let embedded
-      try {
-        embedded =
-          fullsize.mime === 'image/png'
-            ? await pdf.embedPng(fullsize.bytes)
-            : await pdf.embedJpg(fullsize.bytes)
-      } catch (err) {
-        console.warn('Embed failed for full-size page', err)
-        continue
-      }
-
       const imgAreaX = FULLSIZE_MARGIN
       const imgAreaY = FULLSIZE_MARGIN + FULLSIZE_CAPTION_H
       const imgAreaW = pageW - FULLSIZE_MARGIN * 2
       const imgAreaH = pageH - FULLSIZE_MARGIN * 2 - FULLSIZE_CAPTION_H
-      const fit = fitImageInBox(embedded.width, embedded.height, imgAreaW, imgAreaH)
-      page.drawImage(embedded, {
+      const fit = fitImageInBox(handle.width, handle.height, imgAreaW, imgAreaH)
+      page.drawImage(handle, {
         x: imgAreaX + fit.x,
         y: imgAreaY + fit.y,
         width: fit.w,
@@ -565,4 +843,62 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
   report(0, 1, 'Finalizing PDF')
   const bytes = await pdf.save()
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
+}
+
+/**
+ * Helper: fit-contain a pdf-lib PDFImage handle inside a box, or draw a
+ * gray placeholder with a message if the handle is null.
+ */
+function drawThumbInBox(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handle: any,
+  boxX: number,
+  boxY: number,
+  boxW: number,
+  boxH: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rgb: (r: number, g: number, b: number) => any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  helv: any,
+  fallback: string,
+): void {
+  if (!handle) {
+    page.drawRectangle({
+      x: boxX,
+      y: boxY,
+      width: boxW,
+      height: boxH,
+      color: rgb(0.95, 0.96, 0.97),
+      borderColor: rgb(0.85, 0.87, 0.9),
+      borderWidth: 0.5,
+    })
+    const tw = helv.widthOfTextAtSize(fallback, 7)
+    page.drawText(fallback, {
+      x: boxX + (boxW - tw) / 2,
+      y: boxY + boxH / 2 - 2,
+      size: 7,
+      font: helv,
+      color: rgb(0.55, 0.57, 0.6),
+    })
+    return
+  }
+  // Transparent-background fit-contain frame
+  page.drawRectangle({
+    x: boxX,
+    y: boxY,
+    width: boxW,
+    height: boxH,
+    color: rgb(0.97, 0.98, 0.99),
+    borderColor: rgb(0.87, 0.88, 0.9),
+    borderWidth: 0.5,
+  })
+  const fit = fitImageInBox(handle.width, handle.height, boxW - 4, boxH - 4)
+  page.drawImage(handle, {
+    x: boxX + 2 + fit.x,
+    y: boxY + 2 + fit.y,
+    width: fit.w,
+    height: fit.h,
+  })
 }
