@@ -56,7 +56,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
     setHovered(true)
   }, [])
   const onLeave = useCallback(() => {
-    leaveTimer.current = setTimeout(() => setHovered(false), 350)
+    leaveTimer.current = setTimeout(() => setHovered(false), 600)
   }, [])
 
   const pinRef = usePinPointerHandler((e) => {
@@ -143,7 +143,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
               x1={svgCenter} y1={svgCenter}
               x2={centerX + svgCenter} y2={centerY + svgCenter}
               stroke="transparent"
-              strokeWidth={14}
+              strokeWidth={22}
               style={{ pointerEvents: 'stroke' }}
               onPointerEnter={onEnter}
               onPointerLeave={onLeave}
@@ -171,18 +171,30 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
             left: '50%',
             top: '50%',
             transform: `translate(calc(-50% + ${centerX}px), calc(-50% + ${centerY}px))`,
-            width: 12,
-            height: 12,
+            width: 26,
+            height: 26,
             borderRadius: '50%',
-            backgroundColor: color,
-            border: '2px solid white',
             cursor: 'crosshair',
             zIndex: 3,
-            boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-            opacity: selected ? 1 : 0.8,
-            transition: 'opacity 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
-        />
+        >
+          <div
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              backgroundColor: color,
+              border: '2px solid white',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+              opacity: selected ? 1 : 0.8,
+              transition: 'opacity 0.15s',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
       )}
 
       <div
