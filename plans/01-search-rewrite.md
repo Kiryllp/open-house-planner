@@ -12,14 +12,34 @@ a single, tolerant, fuzzy search that:
 - Searches across multiple fields (`name`, `notes`, zone label, tags, author)
 - Behaves the same way everywhere — one shared implementation
 
-## Current state (verified from code)
+## Current state (verified from code — refreshed after history work landed)
 
 | # | File | Lines | Scope | Fields | How |
 |---|------|------|-------|--------|-----|
 | 1 | `src/components/LeftPane.tsx` | 34-49 | unused concepts | `name`, `notes`, `file_url` | `.toLowerCase().includes()` |
-| 2 | `src/components/RealPhotosView.tsx` | 114-137 | per-row picker (unlinked concepts) | `name` only | `.toLowerCase().includes()` + stem sort |
-| 3 | `src/components/LinkingView.tsx` | 23-31 | unlinked concepts | `name` only | `.toLowerCase().includes()` |
-| 4 | `src/components/LinkingView.tsx` | 33-41 | real photos | `name` only | `.toLowerCase().includes()` |
+| 2 | `src/components/RealPhotosView.tsx` | 129-152 | per-row picker (unlinked concepts) | `name` only | `.toLowerCase().includes()` + stem sort |
+| 3 | `src/components/LinkingView.tsx` | 24-32 | unlinked concepts | `name` only | `.toLowerCase().includes()` |
+| 4 | `src/components/LinkingView.tsx` | 34-42 | real photos | `name` only | `.toLowerCase().includes()` |
+
+> **Context the implementer needs to know (added after history work landed):**
+>
+> - `RealPhotosView.tsx` has grown: `RealPhotoRow` now takes extra props
+>   `userName: string` and `allPhotos: Photo[]` and renders an inline
+>   `<PhotoHistoryPanel>` collapsible at lines ~493-510. The picker's
+>   `filteredUnlinked` memo has shifted from 114-137 to 129-152 but its
+>   *internal structure* is unchanged: zone filter, then substring filter
+>   on `c.name` (line 136), then the stem-sort tiebreaker. Preserve all of
+>   that — the rewrite only swaps the substring filter for `usePhotoSearch`.
+> - `LinkingView.tsx` now takes a `userName: string` prop (was stateless).
+>   The two `.useMemo` filters shifted by +1 line due to the interface
+>   change. Preserve the new prop.
+> - Mutations in `RealPhotoRow` and `LinkingView` now go through
+>   `updatePhotoTracked({ before, updates, actorName, linkedRealName?,
+>   priorLinkedRealName? })` from `supabaseActions.ts`. **Do not touch
+>   these call sites** — the search rewrite should only change the filter
+>   logic, not any mutation path.
+> - `PhotoHistoryPanel` is a pure presentational component and contains no
+>   search. It does not affect the 4-site count.
 
 Observations:
 
@@ -156,19 +176,29 @@ Alternatives considered and rejected:
      selects it. (See "MapCanvas pin focus" below — requires a small ref change.)
 
 5. **`src/components/RealPhotosView.tsx`** (concept picker inside each real row)
-   - Replace lines 114-137's search with `usePhotoSearch(unlinkedConcepts, { query: pickerSearch })`.
-   - Preserve the existing "prefer concepts whose stem matches the real photo's
-     stem" sort. The cleanest way: after getting results back, apply the same
-     `realStem` comparator as a tiebreaker among equal-score items.
+   - Replace the substring filter inside the `filteredUnlinked` memo at
+     lines 129-152. The `pickerZoneFilter` block and the `realStem`
+     tiebreaker sort must both stay.
+   - Recommended shape: call `usePhotoSearch(unlinkedConcepts, { query: pickerSearch })`,
+     get `results`, then apply the existing `realStem` / zone-match
+     comparator as a secondary sort among equal-score items.
    - Use `HighlightedText` on each card's name overlay.
    - Replace the "No matches. Try a different search." empty state with the
      new helpful copy.
+   - **Do not touch** the new `allPhotos`/`userName` props, the
+     `<PhotoHistoryPanel>` render at ~493-510, or any `updatePhotoTracked`
+     call site.
 
 6. **`src/components/LinkingView.tsx`** (both panes)
-   - Lines 23-31 and 33-41: replace with `usePhotoSearch(...)`.
+   - Lines 24-32 (`unlinkedConcepts` memo) and 34-42 (`filteredReal`
+     memo): replace the substring filter with `usePhotoSearch(...)`.
+   - Preserve the zone filter (`leftZone`, `rightZone`) and the
+     `userName` prop.
    - Add zone to the searchable fields so the user can type `zone 3` or `z3`
      to narrow.
    - Wrap name labels in `HighlightedText`.
+   - **Do not touch** the `linkToReal` function — it already uses
+     `updatePhotoTracked` correctly.
 
 7. **`src/components/MapCanvas.tsx`** (only needed for the Search-all toggle)
    - Add `useImperativeHandle` exposing a single method:

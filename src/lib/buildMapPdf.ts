@@ -77,11 +77,10 @@ const INDEX_TOP_BAND = 70
 const INDEX_HEADER_H = 22
 const INDEX_ROW_H = 56
 const INDEX_COL_NUM_W = 28
-const INDEX_COL_NAME_W = 160
-const INDEX_COL_ZONE_W = 60
+const INDEX_COL_NAME_W = 180
+const INDEX_COL_ZONE_W = 56
 const INDEX_PREVIEW_THUMB_W = 130
 const INDEX_PREVIEW_THUMB_H = 48
-const INDEX_PREVIEW_GAP = 6
 
 const FETCH_CONCURRENCY = 5
 
@@ -370,7 +369,8 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
     const numX = INDEX_MARGIN
     const nameX = numX + INDEX_COL_NUM_W
     const zoneX = nameX + INDEX_COL_NAME_W
-    const previewX = zoneX + INDEX_COL_ZONE_W
+    const conceptX = zoneX + INDEX_COL_ZONE_W
+    const realX = conceptX + INDEX_PREVIEW_THUMB_W + 4
 
     // How many rows can we fit per page?
     const rowAreaTopY = LETTER_LONG - INDEX_TOP_BAND - INDEX_HEADER_H
@@ -433,7 +433,8 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
       drawHeader('#', numX)
       drawHeader('FILENAME', nameX)
       drawHeader('ZONE', zoneX)
-      drawHeader('PREVIEW  (concept / real)', previewX)
+      drawHeader('CONCEPT', conceptX)
+      drawHeader('REAL', realX)
 
       // Rows
       const firstRow = pageIdx * rowsPerPage
@@ -489,20 +490,22 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
           color: rgb(0.12, 0.14, 0.18),
         })
 
-        // Zone
+        // Zone — uniform neutral color so the ZONE column reads as metadata,
+        // leaving the colored `#` badge as the sole visual link to the map.
         const zoneText = zoneLabel(photo.zone)
         page.drawText(zoneText, {
           x: zoneX + 6,
           y: badgeCy - 4,
           size: 10,
           font: helvBold,
-          color: rgb(r, g, b),
+          color: rgb(0.3, 0.32, 0.36),
         })
 
-        // Preview: concept thumbnail + linked-real thumbnail side by side
+        // Preview: concept thumbnail and linked-real thumbnail now live
+        // in their own columns so the filename column gets more room.
         const previewTopY = rowBottomY + (INDEX_ROW_H - INDEX_PREVIEW_THUMB_H) / 2
-        const conceptBoxX = previewX + 6
-        const realBoxX = conceptBoxX + INDEX_PREVIEW_THUMB_W + INDEX_PREVIEW_GAP
+        const conceptBoxX = conceptX + 2
+        const realBoxX = realX + 2
 
         // Concept thumb (reuses the same PDFImage handle as the key grid)
         const conceptHandle = await embedForTier(photo.file_url, 'concept')
