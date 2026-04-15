@@ -1,35 +1,26 @@
 'use client'
 
 import { createContext, useContext } from 'react'
-import type { Board, Photo, AppMode } from './types'
+import type { Photo } from './types'
+
+export type TopTab = 'real' | 'concept' | 'trash'
 
 export interface AppState {
   photos: Photo[]
-  boards: Board[]
-  mode: AppMode
   selectedId: string | null
-  selectedKind: 'photo' | 'board' | null
   draggingId: string | null
-  galleryTab: 'potential' | 'all'
+  tab: TopTab
   userName: string
 }
 
 export interface AppActions {
   setPhotos: (photos: Photo[]) => void
-  setBoards: (boards: Board[]) => void
-  select: (id: string | null, kind: 'photo' | 'board' | null) => void
+  select: (id: string | null) => void
   setDraggingId: (id: string | null) => void
   updatePhoto: (id: string, updates: Partial<Photo>) => void
-  updateBoard: (id: string, updates: Partial<Board>) => void
   addPhoto: (photo: Photo) => void
-  addBoard: (board: Board) => void
   removePhoto: (id: string) => void
-  removeBoard: (id: string) => void
-  enterBoardFocus: (boardId: string) => void
-  exitBoardFocus: () => void
-  assignPhotoToBoard: (photoId: string, boardId: string) => void
-  unassignPhoto: (photoId: string) => void
-  setGalleryTab: (tab: 'potential' | 'all') => void
+  setTab: (tab: TopTab) => void
 }
 
 export const AppContext = createContext<(AppState & AppActions) | null>(null)

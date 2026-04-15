@@ -1,184 +1,142 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { User, ImagePlus, Plus, ArrowLeft, WifiOff, Loader2, Undo2, Redo2 } from 'lucide-react'
-import type { AppMode } from '@/lib/types'
-import type { UserPresence } from '@/lib/useSupabaseData'
+import { useRef } from 'react'
+import type { TopTab } from '@/lib/store'
 
-type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
-
-interface TopBarProps {
+interface Props {
+  tab: TopTab
+  realCount: number
+  conceptCount: number
+  trashCount: number
   userName: string
-  onChangeName: (name: string) => void
-  onAddBoard: () => void
-  onUploadPhotos: (files: FileList) => void
-  onBack: () => void
-  mode: AppMode
-  boardLabel?: string
-  connectionStatus: ConnectionStatus
-  totalBoards: number
-  assignedBoards: number
-  presenceUsers: UserPresence[]
-  boardId: string | null
-  canUndo: boolean
-  canRedo: boolean
-  onUndo: () => void
-  onRedo: () => void
+  onChangeTab: (tab: TopTab) => void
+  onChangeName: () => void
+  onUploadFiles: (files: File[]) => void
+  onPrintMap: () => void
+  onDownloadOriginals: () => void
+  downloading: boolean
 }
 
 export function TopBar({
-  userName, onChangeName, onAddBoard, onUploadPhotos, onBack, mode, boardLabel, connectionStatus,
-  totalBoards, assignedBoards, presenceUsers, boardId, canUndo, canRedo, onUndo, onRedo,
-}: TopBarProps) {
-  const [editingName, setEditingName] = useState(false)
-  const [nameValue, setNameValue] = useState(userName)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    setNameValue(userName)
-  }, [userName])
-
-  function handleNameSubmit() {
-    const trimmed = nameValue.trim()
-    if (trimmed) {
-      localStorage.setItem('userName', trimmed)
-      onChangeName(trimmed)
-    }
-    setEditingName(false)
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files && e.target.files.length > 0) {
-      onUploadPhotos(e.target.files)
-      e.target.value = ''
-    }
-  }
-
-  const isBoardFocus = mode.kind === 'board-focus'
+  tab,
+  realCount,
+  conceptCount,
+  trashCount,
+  userName,
+  onChangeTab,
+  onChangeName,
+  onUploadFiles,
+  onPrintMap,
+  onDownloadOriginals,
+  downloading,
+}: Props) {
+  const inputRef = useRef<HTMLInputElement>(null)
 
   return (
-    <div className="h-12 bg-white border-b border-gray-200 flex items-center px-4 gap-2 shrink-0 z-20">
-      {isBoardFocus && (
+    <header className="flex h-11 items-center justify-between border-b border-gray-200 bg-white px-3">
+      <div className="flex items-center gap-4">
+        <h1 className="text-sm font-semibold text-gray-800">Open House Planner</h1>
         <button
-          onClick={onBack}
-          className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 transition-colors mr-1"
+          type="button"
+          onClick={onChangeName}
+          className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-200"
+          title="Change name"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back
+          {userName || 'anon'}
         </button>
-      )}
-
-      <h1 className="font-semibold text-gray-900 text-sm mr-1">
-        {isBoardFocus ? boardLabel || 'Board' : 'Open House Planner'}
-      </h1>
-
-      {isBoardFocus && (() => {
-        const viewers = presenceUsers.filter(u => u.boardId === boardId)
-        return viewers.length > 0 ? (
-          <div className="flex items-center gap-1 text-[11px] text-gray-500">
-            {viewers.map(u => (
-              <span key={u.userName} className="inline-flex items-center gap-0.5 rounded-full bg-green-50 border border-green-200 px-1.5 py-0.5 text-green-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                {u.userName}
-              </span>
-            ))}
-          </div>
-        ) : null
-      })()}
-
-      {totalBoards > 0 && (
-        <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
-          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${assignedBoards === totalBoards ? 'bg-green-500' : 'bg-blue-500'}`}
-              style={{ width: `${totalBoards === 0 ? 0 : Math.round((assignedBoards / totalBoards) * 100)}%` }}
-            />
-          </div>
-          <span className={`text-[11px] font-medium ${assignedBoards === totalBoards ? 'text-green-700' : 'text-gray-600'}`}>
-            {assignedBoards}/{totalBoards}
-          </span>
-        </div>
-      )}
-
-      <div className="h-6 w-px bg-gray-200" />
-
-      {connectionStatus !== 'connected' && (
-        <div className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
-          {connectionStatus === 'connecting' ? <Loader2 className="h-3 w-3 animate-spin" /> : <WifiOff className="h-3 w-3" />}
-          {connectionStatus === 'connecting' ? 'Connecting…' : 'Live sync paused'}
-        </div>
-      )}
-
-      {/* User name */}
-      {editingName ? (
-        <form onSubmit={(e) => { e.preventDefault(); handleNameSubmit() }} className="flex items-center gap-1">
-          <input
-            value={nameValue}
-            onChange={(e) => setNameValue(e.target.value)}
-            className="px-2 py-0.5 border rounded text-sm w-28 text-gray-900"
-            autoFocus
-            onBlur={handleNameSubmit}
-          />
-        </form>
-      ) : (
-        <button
-          onClick={() => { setEditingName(true); setNameValue(userName) }}
-          className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 transition-colors"
-        >
-          <User className="w-3.5 h-3.5" />
-          <span className="max-w-[80px] truncate">{userName}</span>
-        </button>
-      )}
-
-      <div className="flex-1" />
-
-      {/* Undo/Redo */}
-      <div className="flex items-center gap-0.5">
-        <button
-          onClick={onUndo}
-          disabled={!canUndo}
-          className="p-1.5 rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default"
-          title="Undo (Ctrl+Z)"
-        >
-          <Undo2 className="w-4 h-4" />
-        </button>
-        <button
-          onClick={onRedo}
-          disabled={!canRedo}
-          className="p-1.5 rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default"
-          title="Redo (Ctrl+Shift+Z)"
-        >
-          <Redo2 className="w-4 h-4" />
-        </button>
+        <nav className="flex items-center gap-1">
+          <TabButton
+            active={tab === 'real'}
+            color="blue"
+            onClick={() => onChangeTab('real')}
+          >
+            Real ({realCount})
+          </TabButton>
+          <TabButton
+            active={tab === 'concept'}
+            color="purple"
+            onClick={() => onChangeTab('concept')}
+          >
+            Concept ({conceptCount})
+          </TabButton>
+          <TabButton
+            active={tab === 'trash'}
+            color="gray"
+            onClick={() => onChangeTab('trash')}
+          >
+            Trash ({trashCount})
+          </TabButton>
+        </nav>
       </div>
 
-      {/* Upload Photos */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="image/*"
-        className="hidden"
-        onChange={handleFileChange}
-      />
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors"
-      >
-        <ImagePlus className="w-3.5 h-3.5" />
-        {isBoardFocus ? 'Add Photos' : 'Upload Photos'}
-      </button>
-
-      {/* Add Board (overview only) */}
-      {!isBoardFocus && (
+      <div className="flex items-center gap-2">
         <button
-          onClick={onAddBoard}
-          className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 text-white rounded-md text-xs font-medium hover:bg-gray-800 transition-colors"
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
         >
-          <Plus className="w-3.5 h-3.5" />
-          Add Board
+          Upload Photos
         </button>
-      )}
-    </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? [])
+            if (files.length > 0) onUploadFiles(files)
+            e.target.value = ''
+          }}
+        />
+        <button
+          type="button"
+          onClick={onPrintMap}
+          className="rounded-md border border-gray-200 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          title="Open a print-friendly version of the map in a new tab"
+        >
+          Print Map
+        </button>
+        <button
+          type="button"
+          onClick={onDownloadOriginals}
+          disabled={downloading}
+          className="rounded-md border border-gray-200 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          title="Download a ZIP of all placed original images + manifest"
+        >
+          {downloading ? 'Zipping…' : 'Download Originals'}
+        </button>
+      </div>
+    </header>
+  )
+}
+
+function TabButton({
+  active,
+  color,
+  onClick,
+  children,
+}: {
+  active: boolean
+  color: 'blue' | 'purple' | 'gray'
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  const activeClasses =
+    color === 'blue'
+      ? 'bg-blue-50 text-blue-700 border-blue-200'
+      : color === 'purple'
+        ? 'bg-purple-50 text-purple-700 border-purple-200'
+        : 'bg-gray-100 text-gray-700 border-gray-200'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition ${
+        active ? activeClasses : 'border-transparent text-gray-500 hover:bg-gray-50'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
