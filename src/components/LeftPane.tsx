@@ -26,19 +26,27 @@ export function LeftPane({
   onDropOnZone,
 }: Props) {
   const [query, setQuery] = useState('')
+  const [primaryOnly, setPrimaryOnly] = useState(false)
   const [highlightedSourceUploadId, setHighlightedSourceUploadId] =
     useState<string | null>(null)
   const [paneDragging, setPaneDragging] = useState(false)
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return unusedConcepts
-    const q = query.toLowerCase()
-    return unusedConcepts.filter(
-      (p) =>
-        p.notes?.toLowerCase().includes(q) ||
-        p.file_url.toLowerCase().includes(q),
-    )
-  }, [unusedConcepts, query])
+    let result = unusedConcepts
+    if (primaryOnly) {
+      result = result.filter((p) => p.zone_rank === 1 || p.zone_rank == null)
+    }
+    if (query.trim()) {
+      const q = query.toLowerCase()
+      result = result.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(q) ||
+          p.notes?.toLowerCase().includes(q) ||
+          p.file_url.toLowerCase().includes(q),
+      )
+    }
+    return result
+  }, [unusedConcepts, query, primaryOnly])
 
   const siblingCountByUploadId = useMemo(() => {
     const map = new Map<string, number>()
@@ -116,13 +124,31 @@ export function LeftPane({
           {totalUnused}
         </span>
       </div>
-      <div className="px-4 pb-3">
+      <div className="px-4 pb-2">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search images..."
           className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-700 placeholder:text-gray-400 focus:border-blue-400 focus:bg-white focus:outline-none"
         />
+      </div>
+      <div className="flex items-center gap-2 px-4 pb-3">
+        <button
+          type="button"
+          onClick={() => setPrimaryOnly((v) => !v)}
+          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition ${
+            primaryOnly
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          {primaryOnly ? 'Primary only' : 'All ranks'}
+        </button>
+        {primaryOnly && (
+          <span className="text-[10px] text-gray-400">
+            {filtered.length} of {unusedConcepts.length}
+          </span>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto pb-4">

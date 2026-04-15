@@ -63,6 +63,7 @@ function RealPhotoRow({
   const [busy, setBusy] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [editName, setEditName] = useState(real.name ?? '')
+  const [selectedForLink, setSelectedForLink] = useState<Set<string>>(new Set())
 
   const linkedConcepts = useMemo(
     () => conceptPhotos.filter((c) => c.linked_real_id === real.id),
@@ -92,6 +93,30 @@ function RealPhotoRow({
       toast.success(newZone ? `Assigned to Zone ${newZone}` : 'Zone removed')
     } catch (err) {
       toast.error((err as Error).message || 'Zone update failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function toggleSelectConcept(conceptId: string) {
+    setSelectedForLink((prev) => {
+      const next = new Set(prev)
+      if (next.has(conceptId)) next.delete(conceptId)
+      else next.add(conceptId)
+      return next
+    })
+  }
+
+  async function handleLinkSelected() {
+    if (busy || selectedForLink.size === 0) return
+    setBusy(true)
+    try {
+      const ids = Array.from(selectedForLink)
+      await Promise.all(ids.map((id) => linkConceptToReal(id, real.id)))
+      toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
+      setSelectedForLink(new Set())
+    } catch (err) {
+      toast.error((err as Error).message || 'Link failed')
     } finally {
       setBusy(false)
     }
@@ -262,9 +287,21 @@ function RealPhotoRow({
           {/* Concept picker */}
           {pickerOpen && (
             <div>
-              <div className="mb-1.5 text-xs font-medium text-gray-600">
-                Unlinked concepts ({sortedUnlinked.length})
-                {real.zone && <span className="ml-1 text-gray-400">· same zone first</span>}
+              <div className="mb-1.5 flex items-center justify-between">
+                <div className="text-xs font-medium text-gray-600">
+                  Unlinked concepts ({sortedUnlinked.length})
+                  {real.zone && <span className="ml-1 text-gray-400">· same zone first</span>}
+                </div>
+                {selectedForLink.size > 0 && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleLinkSelected}
+                    className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Link {selectedForLink.size} selected
+                  </button>
+                )}
               </div>
               {sortedUnlinked.length === 0 ? (
                 <div className="rounded border border-dashed border-gray-200 py-4 text-center text-xs text-gray-400">
@@ -272,30 +309,44 @@ function RealPhotoRow({
                 </div>
               ) : (
                 <div className="grid max-h-[40vh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
-                  {sortedUnlinked.map((concept) => (
-                    <button
-                      type="button"
-                      key={concept.id}
-                      disabled={busy}
-                      onClick={() => handleLinkConcept(concept.id)}
-                      className="group relative aspect-[4/3] overflow-hidden rounded border border-gray-200 hover:border-blue-400 disabled:opacity-50"
-                    >
-                      <img
-                        src={concept.file_url}
-                        alt=""
-                        loading="lazy"
-                        className="h-full w-full object-cover"
-                      />
-                      {concept.zone && (
-                        <span className="absolute bottom-0.5 left-0.5 rounded bg-blue-600/80 px-1 py-0.5 text-[9px] font-medium text-white">
-                          Z{concept.zone}
-                        </span>
-                      )}
-                      <span className="absolute inset-0 flex items-center justify-center bg-blue-600/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-blue-600/30 group-hover:opacity-100">
-                        Link
-                      </span>
-                    </button>
-                  ))}
+                  {sortedUnlinked.map((concept) => {
+                    const isSelected = selectedForLink.has(concept.id)
+                    return (
+                      <button
+                        type="button"
+                        key={concept.id}
+                        disabled={busy}
+                        onClick={() => toggleSelectConcept(concept.id)}
+                        className={`group relative aspect-[4/3] overflow-hidden rounded border-2 transition disabled:opacity-50 ${
+                          isSelected
+                            ? 'border-blue-500 ring-2 ring-blue-200'
+                            : 'border-gray-200 hover:border-blue-300'
+                        }`}
+                      >
+                        <img
+                          src={concept.file_url}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                        {concept.zone && (
+                          <span className="absolute bottom-0.5 left-0.5 rounded bg-blue-600/80 px-1 py-0.5 text-[9px] font-medium text-white">
+                            Z{concept.zone}
+                          </span>
+                        )}
+                        {concept.name && (
+                          <span className="absolute bottom-0.5 right-0.5 max-w-[80%] truncate rounded bg-black/60 px-1 py-0.5 text-[8px] text-white">
+                            {concept.name}
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white shadow">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
