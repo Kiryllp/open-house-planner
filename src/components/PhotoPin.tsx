@@ -21,20 +21,20 @@ interface PhotoPinProps {
  * mousedown when pointerdown is cancelled via preventDefault, and
  * react-zoom-pan-pinch listens for mousedown on the window.
  */
-function usePinPointerHandler(handler: (e: PointerEvent) => void) {
+function usePinPointerHandler<T extends Element = HTMLDivElement>(handler: (e: PointerEvent) => void) {
   const handlerRef = useRef(handler)
   handlerRef.current = handler
   const cleanupRef = useRef<(() => void) | null>(null)
 
-  return useCallback((el: HTMLDivElement | null) => {
+  return useCallback((el: T | null) => {
     cleanupRef.current?.()
     cleanupRef.current = null
     if (!el) return
 
-    const onPointer = (e: PointerEvent) => handlerRef.current(e)
-    const onMouse = (e: MouseEvent) => {
+    const onPointer = (e: Event) => handlerRef.current(e as PointerEvent)
+    const onMouse = (e: Event) => {
       e.stopPropagation()
-      e.stopImmediatePropagation()
+      ;(e as MouseEvent).stopImmediatePropagation()
     }
     el.addEventListener('pointerdown', onPointer, { capture: true })
     el.addEventListener('mousedown', onMouse, { capture: true })
@@ -66,7 +66,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
     onInteraction(e, 'move')
   })
 
-  const rotateRef = usePinPointerHandler((e) => {
+  const rotateRef = usePinPointerHandler<SVGGElement>((e) => {
     e.stopPropagation()
     e.stopImmediatePropagation()
     e.preventDefault()
@@ -87,11 +87,14 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
   const tipX2 = Math.cos(dirRad + halfFov) * len
   const tipY2 = Math.sin(dirRad + halfFov) * len
 
-  const centerX = Math.cos(dirRad) * len
-  const centerY = Math.sin(dirRad) * len
+  const handleDist = len * Math.cos(halfFov)
+  const handleX = Math.cos(dirRad) * handleDist
+  const handleY = Math.sin(dirRad) * handleDist
 
   const svgSize = len * 2 + 20
   const svgCenter = len + 10
+
+  const iconAngle = (photo.direction_deg + 360) % 360
 
   return (
     <div
@@ -125,6 +128,9 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
             <stop offset="0%" stopColor={color} stopOpacity={selected ? 0.35 : 0.25} />
             <stop offset="100%" stopColor={color} stopOpacity={0.05} />
           </radialGradient>
+          <filter id={`handle-shadow-${photo.id}`} x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx={0} dy={1} stdDeviation={1.5} floodColor="#000" floodOpacity={0.4} />
+          </filter>
         </defs>
         <polygon
           points={`${svgCenter},${svgCenter} ${tipX1 + svgCenter},${tipY1 + svgCenter} ${tipX2 + svgCenter},${tipY2 + svgCenter}`}
@@ -137,65 +143,32 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
           onPointerLeave={onLeave}
         />
         {showHandle && (
-          <>
-            {/* Invisible wide hit area so the cursor doesn't fall between cone and handle */}
-            <line
-              x1={svgCenter} y1={svgCenter}
-              x2={centerX + svgCenter} y2={centerY + svgCenter}
-              stroke="transparent"
-              strokeWidth={22}
-              style={{ pointerEvents: 'stroke' }}
-              onPointerEnter={onEnter}
-              onPointerLeave={onLeave}
-            />
-            <line
-              x1={svgCenter} y1={svgCenter}
-              x2={centerX + svgCenter} y2={centerY + svgCenter}
-              stroke={color}
-              strokeOpacity={selected ? 0.5 : 0.35}
-              strokeWidth={1}
-              strokeDasharray="4 3"
-            />
-          </>
+          <g
+            ref={rotateRef}
+            className="pin-handle"
+            transform={`translate(${handleX + svgCenter}, ${handleY + svgCenter})`}
+            style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
+            onPointerEnter={onEnter}
+            onPointerLeave={onLeave}
+          >
+            <circle r={14} fill="transparent" />
+            <g
+              transform={`rotate(${iconAngle})`}
+              filter={`url(#handle-shadow-${photo.id})`}
+              opacity={selected ? 1 : 0.85}
+            >
+              <path
+                d="M-4.5 1a5.5 5.5 0 0 1 9.6-3.6l1.2 1.2M6.3-2.4v3.2h-3.2M4.5-1a5.5 5.5 0 0 1-9.6 3.6l-1.2-1.2M-6.3 2.4v-3.2h3.2"
+                stroke="white"
+                strokeWidth={1.6}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+            </g>
+          </g>
         )}
       </svg>
-
-      {showHandle && (
-        <div
-          ref={rotateRef}
-          className="pin-handle"
-          onPointerEnter={onEnter}
-          onPointerLeave={onLeave}
-          style={{
-            position: 'absolute',
-            left: '50%',
-            top: '50%',
-            transform: `translate(calc(-50% + ${centerX}px), calc(-50% + ${centerY}px))`,
-            width: 26,
-            height: 26,
-            borderRadius: '50%',
-            cursor: 'crosshair',
-            zIndex: 3,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: '50%',
-              backgroundColor: color,
-              border: '2px solid white',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-              opacity: selected ? 1 : 0.8,
-              transition: 'opacity 0.15s',
-              pointerEvents: 'none',
-            }}
-          />
-        </div>
-      )}
 
       <div
         ref={pinRef}
