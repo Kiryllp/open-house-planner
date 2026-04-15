@@ -7,12 +7,10 @@ import { PIN_COLORS } from '@/lib/types'
 import type { TopTab } from '@/lib/store'
 import { useSupabaseData } from '@/lib/useSupabaseData'
 import {
-  placePhotoOnMap,
-  removePhotoFromMap,
-  restorePhoto,
-  softDeletePhoto,
-  updatePhotoDb,
   hardDeletePhotos,
+  restorePhotoTracked,
+  softDeletePhotoTracked,
+  updatePhotoTracked,
 } from '@/lib/supabaseActions'
 import { TopBar } from './TopBar'
 import { LeftPane } from './LeftPane'
@@ -178,6 +176,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
         setLeftPaneDragPhoto(null)
         setGhostDropping(false)
       }, 220)
+      const before = photos.find((p) => p.id === photoId)
+      if (!before) return
       const usedColors = new Set(
         photos
           .filter((p) => p.pin_x != null && !p.deleted_at && p.color)
@@ -189,13 +189,17 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
       updatePhoto(photoId, { pin_x: xPct, pin_y: yPct, color: nextColor })
       try {
-        await placePhotoOnMap(photoId, xPct, yPct)
-        await updatePhotoDb(photoId, { color: nextColor })
+        await updatePhotoTracked({
+          before,
+          updates: { pin_x: xPct, pin_y: yPct, color: nextColor },
+          actorName: userName,
+          autoAssignedColor: true,
+        })
       } catch (err) {
         toast.error((err as Error).message || 'Could not place photo')
       }
     },
-    [updatePhoto, photos],
+    [updatePhoto, photos, userName],
   )
 
   const handleDropFilesOnMap = useCallback(
@@ -217,13 +221,17 @@ export function MainScreen({ userName, onChangeName }: Props) {
       if (!photo || photo.zone === zone) return
       updatePhoto(photoId, { zone, zone_rank: null })
       try {
-        await updatePhotoDb(photoId, { zone, zone_rank: null })
+        await updatePhotoTracked({
+          before: photo,
+          updates: { zone, zone_rank: null },
+          actorName: userName,
+        })
         toast.success(`Moved to Zone ${zone}`)
       } catch (err) {
         toast.error((err as Error).message || 'Move failed')
       }
     },
-    [photos, updatePhoto],
+    [photos, updatePhoto, userName],
   )
 
   // --- Pin drag on the map ------------------------------------------
@@ -242,13 +250,19 @@ export function MainScreen({ userName, onChangeName }: Props) {
     async (id: string, xPct: number, yPct: number) => {
       setDraggingId(null)
       setDraggingMapPhoto(null)
+      const before = photosRef.current.find((p) => p.id === id)
+      if (!before) return
       try {
-        await placePhotoOnMap(id, xPct, yPct)
+        await updatePhotoTracked({
+          before,
+          updates: { pin_x: xPct, pin_y: yPct },
+          actorName: userName,
+        })
       } catch (err) {
         toast.error((err as Error).message || 'Save failed')
       }
     },
-    [],
+    [userName],
   )
 
   // --- Pin rotate on the map ----------------------------------------
@@ -260,26 +274,38 @@ export function MainScreen({ userName, onChangeName }: Props) {
   )
   const handleEndRotatePin = useCallback(
     async (id: string, directionDeg: number) => {
+      const before = photosRef.current.find((p) => p.id === id)
+      if (!before) return
       try {
-        await updatePhotoDb(id, { direction_deg: directionDeg })
+        await updatePhotoTracked({
+          before,
+          updates: { direction_deg: directionDeg },
+          actorName: userName,
+        })
       } catch (err) {
         toast.error((err as Error).message || 'Save failed')
       }
     },
-    [],
+    [userName],
   )
 
   // --- Visible carousel X: remove from map --------------------------
   const handleRemoveFromMap = useCallback(
     async (id: string) => {
+      const before = photosRef.current.find((p) => p.id === id)
+      if (!before) return
       updatePhoto(id, { pin_x: null, pin_y: null })
       try {
-        await removePhotoFromMap(id)
+        await updatePhotoTracked({
+          before,
+          updates: { pin_x: null, pin_y: null },
+          actorName: userName,
+        })
       } catch (err) {
         toast.error((err as Error).message || 'Could not remove')
       }
     },
-    [updatePhoto],
+    [updatePhoto, userName],
   )
 
   // --- Delete / restore ---------------------------------------------
@@ -287,28 +313,30 @@ export function MainScreen({ userName, onChangeName }: Props) {
     async (photo: Photo) => {
       updatePhoto(photo.id, { deleted_at: new Date().toISOString() })
       try {
-        await softDeletePhoto(photo.id)
+        await softDeletePhotoTracked(photo, userName)
       } catch (err) {
         toast.error((err as Error).message || 'Delete failed')
       }
     },
-    [updatePhoto],
+    [updatePhoto, userName],
   )
   const handleRestore = useCallback(
     async (photo: Photo) => {
       updatePhoto(photo.id, { deleted_at: null })
       try {
-        await restorePhoto(photo.id)
+        await restorePhotoTracked(photo, userName)
       } catch (err) {
         toast.error((err as Error).message || 'Restore failed')
       }
     },
-    [updatePhoto],
+    [updatePhoto, userName],
   )
   const handleHardDelete = useCallback(
     async (photo: Photo) => {
       if (!confirm('Permanently delete this photo?')) return
       try {
+        // Hard-delete cascades and wipes history. No event emitted by
+        // design — the cascade would orphan it instantly.
         await hardDeletePhotos([photo.id])
         removePhoto(photo.id)
       } catch (err) {
@@ -422,6 +450,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
           <RealPhotosView
             realPhotos={realPhotos}
             conceptPhotos={conceptPhotos}
+            userName={userName}
             onPhotoClick={(photo) => setPreviewPhotoId(photo.id)}
             onDelete={handleSoftDelete}
           />
@@ -474,6 +503,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
           key={previewPhoto.id}
           concept={previewPhoto}
           realPhotos={realPhotos}
+          allPhotos={photos}
           userName={userName}
           onClose={() => setPreviewPhotoId(null)}
         />

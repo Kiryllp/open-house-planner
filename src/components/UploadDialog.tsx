@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS, zoneRankLabel } from '@/lib/types'
 import { parseZonesFromFilename } from '@/lib/parseZones'
-import { insertPhotos, uploadPhoto, type PhotoInsert } from '@/lib/supabaseActions'
+import { insertPhotosTracked, uploadPhoto, type PhotoInsert } from '@/lib/supabaseActions'
 
 type PendingType = 'concept' | 'real'
 
@@ -113,7 +113,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
               userName,
               name: photoName,
             })
-            const inserted = await insertPhotos([row])
+            const inserted = await insertPhotosTracked([row], userName)
             allInserted.push(...inserted)
           } else {
             const rows: PhotoInsert[] = entry.zones.map((zone, i) =>
@@ -127,7 +127,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
                 name: photoName,
               }),
             )
-            const inserted = await insertPhotos(rows)
+            const inserted = await insertPhotosTracked(rows, userName)
             allInserted.push(...inserted)
           }
         } catch (err) {

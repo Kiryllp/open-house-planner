@@ -5,14 +5,16 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
-import { updatePhotoDb, linkConceptToReal } from '@/lib/supabaseActions'
+import { updatePhotoTracked } from '@/lib/supabaseActions'
 import { LinkingView } from './LinkingView'
+import { PhotoHistoryPanel } from './PhotoHistoryPanel'
 
 type RealSubTab = 'gallery' | 'link'
 
 interface Props {
   realPhotos: Photo[]
   conceptPhotos: Photo[]
+  userName: string
   onPhotoClick: (photo: Photo) => void
   onDelete: (photo: Photo) => void
 }
@@ -20,10 +22,16 @@ interface Props {
 export function RealPhotosView({
   realPhotos,
   conceptPhotos,
+  userName,
   onPhotoClick,
   onDelete,
 }: Props) {
   const [subTab, setSubTab] = useState<RealSubTab>('gallery')
+
+  const allPhotos = useMemo(
+    () => [...realPhotos, ...conceptPhotos],
+    [realPhotos, conceptPhotos],
+  )
 
   if (subTab === 'link') {
     return (
@@ -32,7 +40,7 @@ export function RealPhotosView({
           <SubTabButton active={false} onClick={() => setSubTab('gallery')}>Gallery</SubTabButton>
           <SubTabButton active onClick={() => setSubTab('link')}>Quick Link</SubTabButton>
         </div>
-        <LinkingView conceptPhotos={conceptPhotos} realPhotos={realPhotos} />
+        <LinkingView conceptPhotos={conceptPhotos} realPhotos={realPhotos} userName={userName} />
       </div>
     )
   }
@@ -56,6 +64,8 @@ export function RealPhotosView({
                 key={real.id}
                 real={real}
                 conceptPhotos={conceptPhotos}
+                allPhotos={allPhotos}
+                userName={userName}
                 onPhotoClick={onPhotoClick}
                 onDelete={onDelete}
               />
@@ -86,16 +96,21 @@ function SubTabButton({ active, onClick, children }: { active: boolean; onClick:
 function RealPhotoRow({
   real,
   conceptPhotos,
+  allPhotos,
+  userName,
   onPhotoClick,
   onDelete,
 }: {
   real: Photo
   conceptPhotos: Photo[]
+  allPhotos: Photo[]
+  userName: string
   onPhotoClick: (photo: Photo) => void
   onDelete: (photo: Photo) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [editName, setEditName] = useState(real.name ?? '')
   const [selectedForLink, setSelectedForLink] = useState<Set<string>>(new Set())
   const [pickerSearch, setPickerSearch] = useState('')
@@ -141,7 +156,11 @@ function RealPhotoRow({
     const newZone = zone === real.zone ? null : zone
     setBusy(true)
     try {
-      await updatePhotoDb(real.id, { zone: newZone, zone_rank: null })
+      await updatePhotoTracked({
+        before: real,
+        updates: { zone: newZone, zone_rank: null },
+        actorName: userName,
+      })
       toast.success(newZone ? `Assigned to Zone ${newZone}` : 'Zone removed')
     } catch (err) {
       toast.error((err as Error).message || 'Zone update failed')
@@ -164,7 +183,23 @@ function RealPhotoRow({
     setBusy(true)
     try {
       const ids = Array.from(selectedForLink)
-      await Promise.all(ids.map((id) => linkConceptToReal(id, real.id)))
+      await Promise.all(
+        ids.map((id) => {
+          const concept = conceptPhotos.find((c) => c.id === id)
+          if (!concept) return Promise.resolve()
+          const priorReal =
+            concept.linked_real_id != null
+              ? allPhotos.find((p) => p.id === concept.linked_real_id) ?? null
+              : null
+          return updatePhotoTracked({
+            before: concept,
+            updates: { linked_real_id: real.id },
+            actorName: userName,
+            linkedRealName: real.name ?? null,
+            priorLinkedRealName: priorReal?.name ?? null,
+          })
+        }),
+      )
       toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
       setSelectedForLink(new Set())
     } catch (err) {
@@ -178,7 +213,14 @@ function RealPhotoRow({
     if (busy) return
     setBusy(true)
     try {
-      await linkConceptToReal(conceptId, null)
+      const concept = conceptPhotos.find((c) => c.id === conceptId)
+      if (!concept) return
+      await updatePhotoTracked({
+        before: concept,
+        updates: { linked_real_id: null },
+        actorName: userName,
+        priorLinkedRealName: real.name ?? null,
+      })
       toast.success('Unlinked')
     } catch (err) {
       toast.error((err as Error).message || 'Unlink failed')
@@ -194,7 +236,11 @@ function RealPhotoRow({
     if (busy) return
     setBusy(true)
     try {
-      await updatePhotoDb(real.id, { name: newName })
+      await updatePhotoTracked({
+        before: real,
+        updates: { name: newName },
+        actorName: userName,
+      })
       toast.success('Name saved')
     } catch (err) {
       toast.error((err as Error).message || 'Rename failed')
@@ -443,6 +489,25 @@ function RealPhotoRow({
               )}
             </div>
           )}
+
+          {/* History (inline collapsible) */}
+          <div className="border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-700 hover:text-gray-900"
+            >
+              <span>History</span>
+              <span className="text-[10px] text-gray-400">
+                {historyOpen ? 'Hide ▴' : 'Show ▾'}
+              </span>
+            </button>
+            {historyOpen && (
+              <div className="mt-2 max-h-80 overflow-y-auto rounded border border-gray-100 bg-gray-50/50">
+                <PhotoHistoryPanel photoId={real.id} photos={allPhotos} />
+              </div>
+            )}
+          </div>
 
           {/* Delete */}
           <div className="mt-auto flex justify-end border-t border-gray-100 pt-3">

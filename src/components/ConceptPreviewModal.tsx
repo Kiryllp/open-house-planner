@@ -7,18 +7,21 @@ import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS, zoneRankLabel } from '@/lib/types'
 import { ComparisonSlider } from './ComparisonSlider'
 import { RealPhotoPicker } from './RealPhotoPicker'
+import { PhotoHistoryPanel } from './PhotoHistoryPanel'
 import {
-  linkConceptToReal,
-  updatePhotoDb,
+  insertPhotoTracked,
+  softDeletePhotoTracked,
+  updatePhotoTracked,
   uploadPhoto,
-  insertPhotos,
-  softDeletePhoto,
   type PhotoInsert,
 } from '@/lib/supabaseActions'
+
+type Tab = 'overview' | 'history'
 
 interface Props {
   concept: Photo
   realPhotos: Photo[]
+  allPhotos: Photo[]
   userName: string
   onClose: () => void
 }
@@ -26,10 +29,12 @@ interface Props {
 export function ConceptPreviewModal({
   concept,
   realPhotos,
+  allPhotos,
   userName,
   onClose,
 }: Props) {
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useState<Tab>('overview')
   const [showPicker, setShowPicker] = useState(!concept.linked_real_id)
   const [notes, setNotes] = useState(concept.notes ?? '')
   const [editName, setEditName] = useState(concept.name ?? '')
@@ -43,7 +48,14 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await linkConceptToReal(concept.id, realId)
+      const newLinked = realPhotos.find((r) => r.id === realId) ?? null
+      await updatePhotoTracked({
+        before: concept,
+        updates: { linked_real_id: realId },
+        actorName: userName,
+        linkedRealName: newLinked?.name ?? null,
+        priorLinkedRealName: linkedReal?.name ?? null,
+      })
       setShowPicker(false)
       toast.success('Linked')
     } catch (err) {
@@ -57,7 +69,12 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await linkConceptToReal(concept.id, null)
+      await updatePhotoTracked({
+        before: concept,
+        updates: { linked_real_id: null },
+        actorName: userName,
+        priorLinkedRealName: linkedReal?.name ?? null,
+      })
       setShowPicker(true)
       toast.success('Unlinked')
     } catch (err) {
@@ -98,9 +115,15 @@ export function ConceptPreviewModal({
         deleted_at: null,
         is_anchor: false,
       }
-      const [inserted] = await insertPhotos([row])
+      const inserted = await insertPhotoTracked(row, userName)
       if (inserted) {
-        await linkConceptToReal(concept.id, inserted.id)
+        await updatePhotoTracked({
+          before: concept,
+          updates: { linked_real_id: inserted.id },
+          actorName: userName,
+          linkedRealName: inserted.name ?? null,
+          priorLinkedRealName: linkedReal?.name ?? null,
+        })
         setShowPicker(false)
         toast.success('Uploaded and linked')
       }
@@ -115,7 +138,11 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await updatePhotoDb(concept.id, { zone, zone_rank: null })
+      await updatePhotoTracked({
+        before: concept,
+        updates: { zone, zone_rank: null },
+        actorName: userName,
+      })
       toast.success(`Moved to Zone ${zone}`)
     } catch (err) {
       toast.error((err as Error).message || 'Move failed')
@@ -128,7 +155,7 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await softDeletePhoto(concept.id)
+      await softDeletePhotoTracked(concept, userName)
       toast.success('Deleted')
       onClose()
     } catch (err) {
@@ -140,9 +167,15 @@ export function ConceptPreviewModal({
 
   async function handleSaveNotes() {
     if (busy) return
+    const newNotes = notes || null
+    if (newNotes === concept.notes) return
     setBusy(true)
     try {
-      await updatePhotoDb(concept.id, { notes: notes || null })
+      await updatePhotoTracked({
+        before: concept,
+        updates: { notes: newNotes },
+        actorName: userName,
+      })
       toast.success('Saved')
     } catch (err) {
       toast.error((err as Error).message || 'Save failed')
@@ -158,7 +191,11 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await updatePhotoDb(concept.id, { name: newName })
+      await updatePhotoTracked({
+        before: concept,
+        updates: { name: newName },
+        actorName: userName,
+      })
       toast.success('Name saved')
     } catch (err) {
       toast.error((err as Error).message || 'Rename failed')
@@ -199,141 +236,157 @@ export function ConceptPreviewModal({
           </button>
         </header>
 
+        {/* Tab bar */}
+        <div className="flex shrink-0 items-center gap-1 border-b border-gray-200 bg-white px-3 py-1.5">
+          <TabButton active={tab === 'overview'} onClick={() => setTab('overview')}>
+            Overview
+          </TabButton>
+          <TabButton active={tab === 'history'} onClick={() => setTab('history')}>
+            History
+          </TabButton>
+        </div>
+
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
-          {/* Large preview image */}
-          <div className="bg-gray-900">
-            {linkedReal && !showPicker ? (
-              <div className="aspect-[4/3] w-full">
-                <ComparisonSlider leftPhoto={linkedReal} rightPhoto={concept} />
-              </div>
-            ) : (
-              <div className="flex aspect-[4/3] w-full items-center justify-center p-3">
-                <img
-                  src={concept.file_url}
-                  alt=""
-                  className="max-h-full max-w-full rounded object-contain"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Zone badge bar */}
-          <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2">
-            {concept.zone ? (
-              <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                Zone {concept.zone} · {zoneRankLabel(concept.zone_rank)}
-              </span>
-            ) : (
-              <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                No zone
-              </span>
-            )}
-          </div>
-
-          {/* Zone picker */}
-          <section className="border-b border-gray-100 px-4 py-3">
-            <div className="mb-1.5 flex items-center gap-2">
-              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-                Zone
-              </h3>
-              {needsZone && (
-                <span className="text-[10px] text-amber-600">Assign one</span>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {ZONE_IDS.map((zone) => (
-                <button
-                  type="button"
-                  key={zone}
-                  disabled={busy || zone === concept.zone}
-                  onClick={() => handleChangeZone(zone)}
-                  className={`rounded-md border px-2.5 py-0.5 text-[11px] font-medium transition ${
-                    zone === concept.zone
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50'
-                  }`}
-                >
-                  Z{zone}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {/* Notes */}
-          <section className="border-b border-gray-100 px-4 py-3">
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-              Notes
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Add a note..."
-              className="w-full resize-none rounded-md border border-gray-200 bg-gray-50 p-2 text-xs focus:border-blue-400 focus:bg-white focus:outline-none"
-            />
-            <div className="mt-1.5 flex justify-end">
-              <button
-                type="button"
-                onClick={handleSaveNotes}
-                disabled={busy}
-                className="rounded-md bg-gray-800 px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-gray-900 disabled:opacity-50"
-              >
-                Save
-              </button>
-            </div>
-          </section>
-
-          {/* Linked real photo */}
-          {isConcept && (
-            <section className="px-4 py-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-                  Linked Real Photo
-                </h3>
-                {linkedReal && (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowPicker((v) => !v)}
-                      className="text-[10px] font-medium text-blue-600 hover:underline"
-                    >
-                      {showPicker ? 'Hide' : 'Change'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleUnlink}
-                      className="text-[10px] font-medium text-red-600 hover:underline"
-                    >
-                      Unlink
-                    </button>
+          {tab === 'overview' ? (
+            <>
+              {/* Large preview image */}
+              <div className="bg-gray-900">
+                {linkedReal && !showPicker ? (
+                  <div className="aspect-[4/3] w-full">
+                    <ComparisonSlider leftPhoto={linkedReal} rightPhoto={concept} />
+                  </div>
+                ) : (
+                  <div className="flex aspect-[4/3] w-full items-center justify-center p-3">
+                    <img
+                      src={concept.file_url}
+                      alt=""
+                      className="max-h-full max-w-full rounded object-contain"
+                    />
                   </div>
                 )}
               </div>
-              {showPicker ? (
-                <RealPhotoPicker
-                  realPhotos={realPhotos}
-                  currentLinkedId={concept.linked_real_id}
-                  onPick={handlePickReal}
-                  onUploadNew={handleUploadNewReal}
-                />
-              ) : linkedReal ? (
-                <div className="text-[10px] text-gray-500">
-                  Linked. Use the slider above to compare.
+
+              {/* Zone badge bar */}
+              <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2">
+                {concept.zone ? (
+                  <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                    Zone {concept.zone} · {zoneRankLabel(concept.zone_rank)}
+                  </span>
+                ) : (
+                  <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                    No zone
+                  </span>
+                )}
+              </div>
+
+              {/* Zone picker */}
+              <section className="border-b border-gray-100 px-4 py-3">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+                    Zone
+                  </h3>
+                  {needsZone && (
+                    <span className="text-[10px] text-amber-600">Assign one</span>
+                  )}
                 </div>
-              ) : (
-                <div className="text-[10px] text-gray-500">
-                  Not linked.{' '}
+                <div className="flex flex-wrap gap-1.5">
+                  {ZONE_IDS.map((zone) => (
+                    <button
+                      type="button"
+                      key={zone}
+                      disabled={busy || zone === concept.zone}
+                      onClick={() => handleChangeZone(zone)}
+                      className={`rounded-md border px-2.5 py-0.5 text-[11px] font-medium transition ${
+                        zone === concept.zone
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50'
+                      }`}
+                    >
+                      Z{zone}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Notes */}
+              <section className="border-b border-gray-100 px-4 py-3">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+                  Notes
+                </label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Add a note..."
+                  className="w-full resize-none rounded-md border border-gray-200 bg-gray-50 p-2 text-xs focus:border-blue-400 focus:bg-white focus:outline-none"
+                />
+                <div className="mt-1.5 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => setShowPicker(true)}
-                    className="font-medium text-blue-600 hover:underline"
+                    onClick={handleSaveNotes}
+                    disabled={busy}
+                    className="rounded-md bg-gray-800 px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-gray-900 disabled:opacity-50"
                   >
-                    Link to a real photo
+                    Save
                   </button>
                 </div>
+              </section>
+
+              {/* Linked real photo */}
+              {isConcept && (
+                <section className="px-4 py-3">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+                      Linked Real Photo
+                    </h3>
+                    {linkedReal && (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowPicker((v) => !v)}
+                          className="text-[10px] font-medium text-blue-600 hover:underline"
+                        >
+                          {showPicker ? 'Hide' : 'Change'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleUnlink}
+                          className="text-[10px] font-medium text-red-600 hover:underline"
+                        >
+                          Unlink
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {showPicker ? (
+                    <RealPhotoPicker
+                      realPhotos={realPhotos}
+                      currentLinkedId={concept.linked_real_id}
+                      onPick={handlePickReal}
+                      onUploadNew={handleUploadNewReal}
+                    />
+                  ) : linkedReal ? (
+                    <div className="text-[10px] text-gray-500">
+                      Linked. Use the slider above to compare.
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-gray-500">
+                      Not linked.{' '}
+                      <button
+                        type="button"
+                        onClick={() => setShowPicker(true)}
+                        className="font-medium text-blue-600 hover:underline"
+                      >
+                        Link to a real photo
+                      </button>
+                    </div>
+                  )}
+                </section>
               )}
-            </section>
+            </>
+          ) : (
+            <PhotoHistoryPanel photoId={concept.id} photos={allPhotos} />
           )}
         </div>
 
@@ -356,5 +409,29 @@ export function ConceptPreviewModal({
           </button>
         </footer>
     </div>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+        active
+          ? 'bg-gray-900 text-white'
+          : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+      }`}
+    >
+      {children}
+    </button>
   )
 }

@@ -5,14 +5,15 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
-import { linkConceptToReal } from '@/lib/supabaseActions'
+import { updatePhotoTracked } from '@/lib/supabaseActions'
 
 interface Props {
   conceptPhotos: Photo[]
   realPhotos: Photo[]
+  userName: string
 }
 
-export function LinkingView({ conceptPhotos, realPhotos }: Props) {
+export function LinkingView({ conceptPhotos, realPhotos, userName }: Props) {
   const [leftZone, setLeftZone] = useState<ZoneId | null>(null)
   const [rightZone, setRightZone] = useState<ZoneId | null>(null)
   const [leftSearch, setLeftSearch] = useState('')
@@ -67,7 +68,24 @@ export function LinkingView({ conceptPhotos, realPhotos }: Props) {
     setBusy(true)
     try {
       const ids = Array.from(selected)
-      await Promise.all(ids.map((id) => linkConceptToReal(id, realId)))
+      const target = realPhotos.find((r) => r.id === realId) ?? null
+      await Promise.all(
+        ids.map((id) => {
+          const concept = conceptPhotos.find((c) => c.id === id)
+          if (!concept) return Promise.resolve()
+          const priorReal =
+            concept.linked_real_id != null
+              ? realPhotos.find((r) => r.id === concept.linked_real_id) ?? null
+              : null
+          return updatePhotoTracked({
+            before: concept,
+            updates: { linked_real_id: realId },
+            actorName: userName,
+            linkedRealName: target?.name ?? null,
+            priorLinkedRealName: priorReal?.name ?? null,
+          })
+        }),
+      )
       toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
       setSelected(new Set())
     } catch (err) {
