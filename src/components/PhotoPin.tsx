@@ -1,7 +1,7 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { memo, useCallback, useRef } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import type { Photo } from '@/lib/types'
 
 interface PhotoPinProps {
@@ -45,6 +45,8 @@ function usePinPointerHandler(handler: (e: PointerEvent) => void) {
 }
 
 export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction }: PhotoPinProps) {
+  const [hovered, setHovered] = useState(false)
+
   const pinRef = usePinPointerHandler((e) => {
     e.stopPropagation()
     e.stopImmediatePropagation()
@@ -60,6 +62,8 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
   })
 
   if (photo.pin_x == null || photo.pin_y == null) return null
+
+  const showHandle = selected || hovered
 
   const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
   const dirRad = (photo.direction_deg - 90) * (Math.PI / 180)
@@ -84,11 +88,13 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
         left: `${photo.pin_x}%`,
         top: `${photo.pin_y}%`,
         transform: 'translate(-50%, -50%)',
-        zIndex: selected ? 20 : 10,
+        zIndex: selected ? 20 : hovered ? 15 : 10,
         pointerEvents: 'auto',
         touchAction: 'none',
       }}
       data-pin-id={photo.id}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
     >
       <svg
         className="absolute pointer-events-none"
@@ -114,19 +120,19 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
           strokeOpacity={selected ? 0.7 : 0.4}
           strokeWidth={selected ? 1.5 : 1}
         />
-        {selected && (
+        {showHandle && (
           <line
             x1={svgCenter} y1={svgCenter}
             x2={centerX + svgCenter} y2={centerY + svgCenter}
             stroke={color}
-            strokeOpacity={0.5}
+            strokeOpacity={selected ? 0.5 : 0.35}
             strokeWidth={1}
             strokeDasharray="4 3"
           />
         )}
       </svg>
 
-      {selected && (
+      {showHandle && (
         <div
           ref={rotateRef}
           className="pin-handle"
@@ -143,6 +149,8 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
             cursor: 'crosshair',
             zIndex: 3,
             boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+            opacity: selected ? 1 : 0.8,
+            transition: 'opacity 0.15s',
           }}
         />
       )}
