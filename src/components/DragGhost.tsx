@@ -41,27 +41,25 @@ export function DragGhost({ photo, dropping }: Props) {
       })
     }
 
-    const onDragOver = (e: DragEvent) => updatePos(e.clientX, e.clientY)
+    // preventDefault in capture phase on window — fires before any other
+    // handler, tells the browser "valid drop target" so it suppresses the
+    // native globe / no-entry cursor icon everywhere.
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      updatePos(e.clientX, e.clientY)
+    }
     const onPointerMove = (e: PointerEvent) => updatePos(e.clientX, e.clientY)
 
-    // Suppress browser's native drag cursor by making everything a valid
-    // drop target visually. Actual drop handling is still in MapCanvas only.
-    const suppressCursor = (e: DragEvent) => {
-      e.preventDefault()
-    }
-    const suppressDrop = (e: DragEvent) => {
-      e.preventDefault()
-    }
+    // Prevent browser from navigating if user drops outside the map
+    const onDrop = (e: DragEvent) => { e.preventDefault() }
 
     window.addEventListener('dragover', onDragOver, true)
     window.addEventListener('pointermove', onPointerMove, true)
-    document.addEventListener('dragover', suppressCursor)
-    document.addEventListener('drop', suppressDrop)
+    window.addEventListener('drop', onDrop, true)
     return () => {
       window.removeEventListener('dragover', onDragOver, true)
       window.removeEventListener('pointermove', onPointerMove, true)
-      document.removeEventListener('dragover', suppressCursor)
-      document.removeEventListener('drop', suppressDrop)
+      window.removeEventListener('drop', onDrop, true)
       cancelAnimationFrame(rafRef.current)
     }
   }, [])
