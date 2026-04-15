@@ -171,15 +171,7 @@ export function ConceptPreviewModal({
   const needsZone = concept.zone == null
 
   return (
-    <>
-      {/* Scrim — lets clicks through to map, click scrim to close drawer */}
-      <div
-        className="fixed inset-0 z-40"
-        onClick={onClose}
-      />
-
-      {/* Drawer panel — right side */}
-      <div className="fixed right-0 top-0 z-50 flex h-full w-[420px] max-w-[90vw] flex-col border-l border-gray-200 bg-white shadow-2xl">
+    <div className="fixed right-0 top-0 z-50 flex h-full w-[600px] max-w-[45vw] flex-col border-l border-gray-200 bg-white shadow-2xl">
         {/* Header */}
         <header className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -363,7 +355,6 @@ export function ConceptPreviewModal({
             Done
           </button>
         </footer>
-      </div>
-    </>
+    </div>
   )
 }

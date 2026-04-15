@@ -365,7 +365,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
                   draggingId={draggingId}
                   onSelect={(id) => {
                     setSelectedId(id)
-                    if (id) setPreviewPhotoId(id)
+                    setPreviewPhotoId(id)
                   }}
                   onStartDragPin={handlePinDragStart}
                   onMovePin={handlePinMove}
