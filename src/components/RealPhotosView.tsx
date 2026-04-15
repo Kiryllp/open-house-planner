@@ -6,6 +6,9 @@ import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
 import { updatePhotoDb, linkConceptToReal } from '@/lib/supabaseActions'
+import { LinkingView } from './LinkingView'
+
+type RealSubTab = 'gallery' | 'link'
 
 interface Props {
   realPhotos: Photo[]
@@ -20,11 +23,26 @@ export function RealPhotosView({
   onPhotoClick,
   onDelete,
 }: Props) {
+  const [subTab, setSubTab] = useState<RealSubTab>('gallery')
+
+  if (subTab === 'link') {
+    return (
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-2">
+          <SubTabButton active={false} onClick={() => setSubTab('gallery')}>Gallery</SubTabButton>
+          <SubTabButton active onClick={() => setSubTab('link')}>Quick Link</SubTabButton>
+        </div>
+        <LinkingView conceptPhotos={conceptPhotos} realPhotos={realPhotos} />
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
-        <h2 className="text-sm font-semibold text-gray-800">Real Photos</h2>
-        <span className="text-xs text-gray-400">{realPhotos.length}</span>
+      <div className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-2">
+        <SubTabButton active onClick={() => setSubTab('gallery')}>Gallery</SubTabButton>
+        <SubTabButton active={false} onClick={() => setSubTab('link')}>Quick Link</SubTabButton>
+        <span className="ml-auto text-xs text-gray-400">{realPhotos.length}</span>
       </div>
       <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
         {realPhotos.length === 0 ? (
@@ -46,6 +64,22 @@ export function RealPhotosView({
         )}
       </div>
     </div>
+  )
+}
+
+function SubTabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+        active
+          ? 'bg-gray-900 text-white'
+          : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 
