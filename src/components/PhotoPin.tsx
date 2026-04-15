@@ -37,9 +37,11 @@ function usePinPointerHandler(handler: (e: PointerEvent) => void) {
     }
     el.addEventListener('pointerdown', onPointer, { capture: true })
     el.addEventListener('mousedown', onMouse, { capture: true })
+    el.addEventListener('click', onMouse, { capture: true })
     cleanupRef.current = () => {
       el.removeEventListener('pointerdown', onPointer, { capture: true })
       el.removeEventListener('mousedown', onMouse, { capture: true })
+      el.removeEventListener('click', onMouse, { capture: true })
     }
   }, [])
 }
