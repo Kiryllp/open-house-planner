@@ -60,6 +60,7 @@ export function ComparisonSlider({ leftPhoto, rightPhoto, onExpand }: Comparison
       <img
         src={leftPhoto.file_url}
         alt="Real photo"
+        loading="lazy"
         className="absolute inset-0 h-full w-full object-cover"
         onClick={() => onExpand?.(leftPhoto)}
       />
@@ -68,6 +69,7 @@ export function ComparisonSlider({ leftPhoto, rightPhoto, onExpand }: Comparison
       <img
         src={rightPhoto.file_url}
         alt="Concept photo"
+        loading="lazy"
         className="absolute inset-0 h-full w-full object-cover"
         style={{ clipPath: `inset(0 0 0 ${position}%)` }}
         onClick={() => onExpand?.(rightPhoto)}

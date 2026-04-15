@@ -93,7 +93,7 @@ export default async function PrintPage() {
             {photos.length} placed photos
           </span>
         </div>
-        <button type="button" onClick={undefined}>
+        <button type="button" id="print-btn" onClick={undefined}>
           Print
         </button>
       </div>

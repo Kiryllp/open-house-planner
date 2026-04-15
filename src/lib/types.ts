@@ -26,6 +26,10 @@ export interface Photo {
   // Only meaningful when type === 'concept'.
   linked_real_id: string | null
 
+  // Marked as a ground-truth reference image for the AI zone classifier.
+  // Must have a zone set to be useful.
+  is_anchor: boolean
+
   // Misc
   color: string | null
   notes: string | null

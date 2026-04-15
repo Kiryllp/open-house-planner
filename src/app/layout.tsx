@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} h-full`}>
       <body className="h-full font-sans bg-gray-100 text-gray-900 antialiased">
         {children}
-        <Toaster position="bottom-right" richColors />
+        <Toaster position="bottom-center" richColors />
       </body>
     </html>
   );

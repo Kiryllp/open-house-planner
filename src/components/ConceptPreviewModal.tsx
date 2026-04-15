@@ -94,6 +94,7 @@ export function ConceptPreviewModal({
         sort_order: null,
         created_by_name: userName || null,
         deleted_at: null,
+        is_anchor: false,
       }
       const [inserted] = await insertPhotos([row])
       if (inserted) {
@@ -112,7 +113,7 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await updatePhotoDb(concept.id, { zone })
+      await updatePhotoDb(concept.id, { zone, zone_rank: null })
       toast.success(`Moved to Zone ${zone}`)
     } catch (err) {
       toast.error((err as Error).message || 'Move failed')
@@ -123,7 +124,6 @@ export function ConceptPreviewModal({
 
   async function handleDelete() {
     if (busy) return
-    if (!confirm('Delete this photo? Its siblings in other zones stay.')) return
     setBusy(true)
     try {
       await softDeletePhoto(concept.id)

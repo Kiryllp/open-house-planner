@@ -16,7 +16,7 @@ export function PrintAutoTrigger({ floorplanUrl }: Props) {
     let cancelled = false
 
     // Wire the toolbar print button
-    const btn = document.querySelector<HTMLButtonElement>('.print-toolbar button')
+    const btn = document.getElementById('print-btn') as HTMLButtonElement | null
     const onBtnClick = () => window.print()
     btn?.addEventListener('click', onBtnClick)
 

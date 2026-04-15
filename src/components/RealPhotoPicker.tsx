@@ -66,6 +66,7 @@ export function RealPhotoPicker({
               <img
                 src={real.file_url}
                 alt=""
+                loading="lazy"
                 className="absolute inset-0 h-full w-full object-cover"
               />
               {real.id === currentLinkedId && (

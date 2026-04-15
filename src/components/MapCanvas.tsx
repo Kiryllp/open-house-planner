@@ -18,7 +18,7 @@ interface Props {
   onMovePin: (id: string, xPct: number, yPct: number) => void
   onEndDragPin: (id: string) => void
   onDropFromLeftPane: (photoId: string, xPct: number, yPct: number) => void
-  onDropFiles: (files: File[], xPct: number, yPct: number) => void
+  onDropFiles: (files: File[]) => void
 }
 
 const DRAG_MIME = 'application/x-ohp-photo-id'
@@ -67,7 +67,7 @@ export function MapCanvas({
       const files = Array.from(e.dataTransfer.files).filter((f) =>
         f.type.startsWith('image/'),
       )
-      if (files.length > 0) onDropFiles(files, x, y)
+      if (files.length > 0) onDropFiles(files)
     }
   }
 

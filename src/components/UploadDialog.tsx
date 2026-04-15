@@ -37,6 +37,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
     }),
   )
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
 
   // Clean up preview URLs
   useEffect(() => {
@@ -82,50 +83,71 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
   async function handleConfirm() {
     if (!canSubmit || uploading) return
     setUploading(true)
-    try {
-      const allInserted: Photo[] = []
-      for (const entry of pending) {
-        const fileUrl = await uploadPhoto(entry.file)
-        const sourceUploadId =
-          typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? crypto.randomUUID()
-            : `upload-${Date.now()}-${Math.random()}`
+    const total = pending.length
+    setUploadProgress({ done: 0, total })
 
-        if (entry.type === 'real') {
-          const row: PhotoInsert = basePhoto({
-            file_url: fileUrl,
-            type: 'real',
-            zone: null,
-            zone_rank: null,
-            source_upload_id: sourceUploadId,
-            userName,
-          })
-          const inserted = await insertPhotos([row])
-          allInserted.push(...inserted)
-          continue
+    const allInserted: Photo[] = []
+    let errorCount = 0
+    const queue = [...pending]
+
+    async function worker() {
+      while (queue.length > 0) {
+        const entry = queue.shift()
+        if (!entry) break
+        try {
+          const fileUrl = await uploadPhoto(entry.file)
+          const sourceUploadId =
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : `upload-${Date.now()}-${Math.random()}`
+
+          if (entry.type === 'real') {
+            const row: PhotoInsert = basePhoto({
+              file_url: fileUrl,
+              type: 'real',
+              zone: null,
+              zone_rank: null,
+              source_upload_id: sourceUploadId,
+              userName,
+            })
+            const inserted = await insertPhotos([row])
+            allInserted.push(...inserted)
+          } else {
+            const rows: PhotoInsert[] = entry.zones.map((zone, i) =>
+              basePhoto({
+                file_url: fileUrl,
+                type: 'concept',
+                zone,
+                zone_rank: i + 1,
+                source_upload_id: sourceUploadId,
+                userName,
+              }),
+            )
+            const inserted = await insertPhotos(rows)
+            allInserted.push(...inserted)
+          }
+        } catch (err) {
+          errorCount++
+          console.error(`Upload failed: ${entry.file.name}`, err)
+          toast.error(`${entry.file.name}: ${(err as Error).message || 'Upload failed'}`)
         }
-
-        const rows: PhotoInsert[] = entry.zones.map((zone, i) =>
-          basePhoto({
-            file_url: fileUrl,
-            type: 'concept',
-            zone,
-            zone_rank: i + 1,
-            source_upload_id: sourceUploadId,
-            userName,
-          }),
-        )
-        const inserted = await insertPhotos(rows)
-        allInserted.push(...inserted)
+        setUploadProgress((prev) => ({ ...prev, done: prev.done + 1 }))
       }
+    }
+
+    const concurrency = 3
+    await Promise.all(Array.from({ length: concurrency }, () => worker()))
+
+    if (allInserted.length > 0) {
       onInserted(allInserted)
-      toast.success(`Uploaded ${pending.length} file(s)`)
+    }
+    const successCount = total - errorCount
+    if (successCount > 0) {
+      toast.success(`Uploaded ${successCount} file(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`)
+    }
+    setUploading(false)
+    if (errorCount === 0) {
       onClose()
-    } catch (err) {
-      console.error('Upload failed', err)
-      toast.error((err as Error).message || 'Upload failed')
-    } finally {
-      setUploading(false)
     }
   }
 
@@ -257,7 +279,9 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
             disabled={!canSubmit || uploading}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
           >
-            {uploading ? 'Uploading…' : 'Upload'}
+            {uploading
+              ? `Uploading ${uploadProgress.done + 1} of ${uploadProgress.total}…`
+              : 'Upload'}
           </button>
         </footer>
       </div>
@@ -291,5 +315,6 @@ function basePhoto(args: {
     sort_order: null,
     created_by_name: args.userName || null,
     deleted_at: null,
+    is_anchor: false,
   }
 }

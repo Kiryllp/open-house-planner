@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import { toast, Toaster } from 'sonner'
+import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import type { TopTab } from '@/lib/store'
 import { useSupabaseData } from '@/lib/useSupabaseData'
@@ -37,6 +37,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   // --- State updaters wired into realtime subscription ---------------
   const setPhotos = useCallback((next: Photo[]) => {
@@ -64,6 +65,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
     removePhoto,
     draggingId,
     userName,
+    onLoaded: () => setLoaded(true),
     onError: (msg) => toast.error(msg),
   })
 
@@ -143,9 +145,9 @@ export function MainScreen({ userName, onChangeName }: Props) {
       e.preventDefault()
       const photo = photos.find((p) => p.id === photoId)
       if (!photo || photo.zone === zone) return
-      updatePhoto(photoId, { zone })
+      updatePhoto(photoId, { zone, zone_rank: null })
       try {
-        await updatePhotoDb(photoId, { zone })
+        await updatePhotoDb(photoId, { zone, zone_rank: null })
         toast.success(`Moved to Zone ${zone}`)
       } catch (err) {
         toast.error((err as Error).message || 'Move failed')
@@ -268,9 +270,20 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
   // --- Render --------------------------------------------------------
   const mainTab = tab
+
+  if (!loaded) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
+          <span className="text-sm text-gray-500">Loading photos…</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-gray-50">
-      <Toaster position="bottom-center" />
       <TopBar
         tab={tab}
         realCount={realPhotos.length}

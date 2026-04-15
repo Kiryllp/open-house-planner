@@ -36,6 +36,7 @@ export function VisiblePhotosBar({ visiblePhotos, selectedId, onSelect, onRemove
               <img
                 src={photo.file_url}
                 alt=""
+                loading="lazy"
                 className="absolute inset-0 h-full w-full object-cover"
               />
               <button

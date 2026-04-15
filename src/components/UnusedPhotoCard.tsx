@@ -46,6 +46,7 @@ export const UnusedPhotoCard = memo(function UnusedPhotoCard({
         src={photo.file_url}
         alt=""
         draggable={false}
+        loading="lazy"
         className="absolute inset-0 h-full w-full object-cover"
       />
 
