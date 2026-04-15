@@ -33,6 +33,19 @@ interface Props {
 
 const FLOORPLAN_URL = process.env.NEXT_PUBLIC_FLOORPLAN_URL ?? null
 
+// Preloaded 1x1 transparent GIF used to hide the browser's native drag image.
+// Must be loaded before setDragImage is called or the browser falls back to
+// its default preview (a globe icon on macOS).
+let _emptyDragImg: HTMLImageElement | null = null
+function getEmptyDragImage(): HTMLImageElement {
+  if (!_emptyDragImg) {
+    _emptyDragImg = new Image()
+    _emptyDragImg.src =
+      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+  }
+  return _emptyDragImg
+}
+
 export function MainScreen({ userName, onChangeName }: Props) {
   const [photos, setPhotosState] = useState<Photo[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -127,9 +140,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
     (e: React.DragEvent, photo: Photo) => {
       e.dataTransfer.setData('application/x-ohp-photo-id', photo.id)
       e.dataTransfer.effectAllowed = 'move'
-      const ghost = new Image()
-      ghost.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-      e.dataTransfer.setDragImage(ghost, 0, 0)
+      e.dataTransfer.setDragImage(getEmptyDragImage(), 0, 0)
       setLeftPaneDragPhoto(photo)
     },
     [],
