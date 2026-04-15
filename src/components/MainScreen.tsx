@@ -76,11 +76,13 @@ export function MainScreen({ userName, onChangeName }: Props) {
     () => photos.filter((p) => p.deleted_at),
     [photos],
   )
+  // Every concept that isn't placed on the map, regardless of whether it
+  // has a zone yet. Legacy rows (imported from the old board model) have
+  // zone = null and show up in the "Needs Zone" section of LeftPane until
+  // the user assigns one.
   const unusedConcepts = useMemo(
     () =>
-      activePhotos.filter(
-        (p) => p.type === 'concept' && p.pin_x == null && p.zone != null,
-      ),
+      activePhotos.filter((p) => p.type === 'concept' && p.pin_x == null),
     [activePhotos],
   )
   const visibleConcepts = useMemo(

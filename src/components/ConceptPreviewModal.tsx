@@ -149,152 +149,181 @@ export function ConceptPreviewModal({
     }
   }
 
+  const isConcept = concept.type === 'concept'
+  const needsZone = isConcept && concept.zone == null
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+        <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-gray-800">
-              {concept.type === 'concept' ? 'Concept preview' : 'Real photo'}
+            <h2 className="text-base font-semibold text-gray-900">
+              {isConcept ? 'Concept photo' : 'Real photo'}
             </h2>
-            {concept.zone && (
-              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+            {concept.zone ? (
+              <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
                 Zone {concept.zone} · {zoneRankLabel(concept.zone_rank)}
               </span>
-            )}
+            ) : isConcept ? (
+              <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                Needs zone
+              </span>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
           >
             Close
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4">
-          {/* Preview area */}
-          {linkedReal && !showPicker ? (
-            <ComparisonSlider leftPhoto={linkedReal} rightPhoto={concept} />
-          ) : (
-            <div className="relative aspect-[4/3] w-full overflow-hidden rounded border border-gray-100 bg-gray-50">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          {/* LEFT: preview image */}
+          <div className="flex min-h-0 items-center justify-center bg-gray-900/95 p-4">
+            {linkedReal && !showPicker ? (
+              <div className="w-full max-h-full">
+                <ComparisonSlider leftPhoto={linkedReal} rightPhoto={concept} />
+              </div>
+            ) : (
               <img
                 src={concept.file_url}
                 alt=""
-                className="absolute inset-0 h-full w-full object-contain"
+                className="max-h-full max-w-full rounded object-contain"
               />
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Link controls */}
-          {concept.type === 'concept' && (
-            <div className="mt-4 rounded border border-gray-100 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-xs font-semibold text-gray-600">
-                  Linked Real Photo
+          {/* RIGHT: controls, scrollable */}
+          <div className="flex min-h-0 flex-col overflow-y-auto border-l border-gray-200">
+            {isConcept && (
+              <section className="border-b border-gray-100 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                    Zone
+                  </h3>
+                  {needsZone && (
+                    <span className="text-[10px] text-amber-600">
+                      Pick one to place this photo
+                    </span>
+                  )}
                 </div>
-                {linkedReal && (
-                  <div className="flex gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {ZONE_IDS.map((zone) => (
                     <button
                       type="button"
-                      onClick={() => setShowPicker((v) => !v)}
-                      className="text-[11px] text-blue-600 hover:underline"
+                      key={zone}
+                      disabled={busy || zone === concept.zone}
+                      onClick={() => handleChangeZone(zone)}
+                      className={`rounded-md border px-3 py-1 text-xs font-medium transition ${
+                        zone === concept.zone
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50'
+                      }`}
                     >
-                      {showPicker ? 'Hide picker' : 'Change'}
+                      Zone {zone}
                     </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="border-b border-gray-100 p-4">
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-700">
+                Notes
+              </label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Add a note about this photo..."
+                className="w-full resize-none rounded-md border border-gray-200 bg-gray-50 p-2 text-xs focus:border-blue-400 focus:bg-white focus:outline-none"
+              />
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSaveNotes}
+                  disabled={busy}
+                  className="rounded-md bg-gray-800 px-3 py-1 text-xs font-medium text-white hover:bg-gray-900 disabled:opacity-50"
+                >
+                  Save notes
+                </button>
+              </div>
+            </section>
+
+            {isConcept && (
+              <section className="p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                    Linked Real Photo
+                  </h3>
+                  {linkedReal && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowPicker((v) => !v)}
+                        className="text-[11px] font-medium text-blue-600 hover:underline"
+                      >
+                        {showPicker ? 'Hide picker' : 'Change'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUnlink}
+                        className="text-[11px] font-medium text-red-600 hover:underline"
+                      >
+                        Unlink
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {showPicker ? (
+                  <RealPhotoPicker
+                    realPhotos={realPhotos}
+                    currentLinkedId={concept.linked_real_id}
+                    onPick={handlePickReal}
+                    onUploadNew={handleUploadNewReal}
+                  />
+                ) : linkedReal ? (
+                  <div className="text-[11px] text-gray-500">
+                    Linked. Use the slider in the preview to compare.
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-gray-500">
+                    Not linked yet.{' '}
                     <button
                       type="button"
-                      onClick={handleUnlink}
-                      className="text-[11px] text-red-600 hover:underline"
+                      onClick={() => setShowPicker(true)}
+                      className="font-medium text-blue-600 hover:underline"
                     >
-                      Unlink
+                      Link to a real photo
                     </button>
                   </div>
                 )}
-              </div>
-              {showPicker ? (
-                <RealPhotoPicker
-                  realPhotos={realPhotos}
-                  currentLinkedId={concept.linked_real_id}
-                  onPick={handlePickReal}
-                  onUploadNew={handleUploadNewReal}
-                />
-              ) : linkedReal ? (
-                <div className="text-[11px] text-gray-500">
-                  Currently linked to a real photo. Drag the slider above to compare.
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {/* Zone editing for concepts */}
-          {concept.type === 'concept' && (
-            <div className="mt-4 rounded border border-gray-100 p-3">
-              <div className="mb-2 text-xs font-semibold text-gray-600">
-                Move to Zone
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {ZONE_IDS.map((zone) => (
-                  <button
-                    type="button"
-                    key={zone}
-                    disabled={busy || zone === concept.zone}
-                    onClick={() => handleChangeZone(zone)}
-                    className={`rounded border px-2 py-0.5 text-[11px] ${
-                      zone === concept.zone
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50'
-                    }`}
-                  >
-                    Zone {zone}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 rounded border border-gray-100 p-3">
-            <label className="mb-1 block text-xs font-semibold text-gray-600">
-              Notes
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="w-full resize-none rounded border border-gray-200 bg-gray-50 p-2 text-xs focus:bg-white focus:outline-none"
-            />
-            <div className="mt-1 flex justify-end">
-              <button
-                type="button"
-                onClick={handleSaveNotes}
-                disabled={busy}
-                className="rounded bg-gray-800 px-2 py-0.5 text-[11px] text-white hover:bg-gray-900 disabled:opacity-50"
-              >
-                Save notes
-              </button>
-            </div>
+              </section>
+            )}
           </div>
         </div>
 
-        <footer className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+        <footer className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-5 py-3">
           <button
             type="button"
             onClick={handleDelete}
             disabled={busy}
-            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+            className="text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
           >
             Delete
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200"
+            className="rounded-md bg-gray-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
           >
             Done
           </button>

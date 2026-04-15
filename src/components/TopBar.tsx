@@ -33,18 +33,21 @@ export function TopBar({
   const inputRef = useRef<HTMLInputElement>(null)
 
   return (
-    <header className="flex h-11 items-center justify-between border-b border-gray-200 bg-white px-3">
-      <div className="flex items-center gap-4">
-        <h1 className="text-sm font-semibold text-gray-800">Open House Planner</h1>
+    <header className="flex h-14 items-center justify-between border-b border-gray-200 bg-white px-5 shadow-sm">
+      <div className="flex items-center gap-5">
+        <h1 className="text-base font-semibold tracking-tight text-gray-900">
+          Open House Planner
+        </h1>
         <button
           type="button"
           onClick={onChangeName}
-          className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-200"
+          className="flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
           title="Change name"
         >
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
           {userName || 'anon'}
         </button>
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1.5">
           <TabButton
             active={tab === 'real'}
             color="blue"
@@ -73,7 +76,7 @@ export function TopBar({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
+          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
         >
           Upload Photos
         </button>
@@ -92,7 +95,7 @@ export function TopBar({
         <button
           type="button"
           onClick={onPrintMap}
-          className="rounded-md border border-gray-200 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          className="rounded-md border border-gray-200 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
           title="Open a print-friendly version of the map in a new tab"
         >
           Print Map
@@ -101,7 +104,7 @@ export function TopBar({
           type="button"
           onClick={onDownloadOriginals}
           disabled={downloading}
-          className="rounded-md border border-gray-200 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-md border border-gray-200 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           title="Download a ZIP of all placed original images + manifest"
         >
           {downloading ? 'Zipping…' : 'Download Originals'}
@@ -132,8 +135,8 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition ${
-        active ? activeClasses : 'border-transparent text-gray-500 hover:bg-gray-50'
+      className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+        active ? activeClasses : 'border-transparent text-gray-500 hover:bg-gray-100'
       }`}
     >
       {children}
