@@ -17,16 +17,14 @@ interface Props {
   onStartDragPin: (id: string) => void
   onMovePin: (id: string, xPct: number, yPct: number) => void
   onEndDragPin: (id: string, xPct: number, yPct: number) => void
+  onRotatePin: (id: string, directionDeg: number) => void
+  onEndRotatePin: (id: string, directionDeg: number) => void
   onDropFromLeftPane: (photoId: string, xPct: number, yPct: number) => void
   onDropFiles: (files: File[]) => void
 }
 
 const DRAG_MIME = 'application/x-ohp-photo-id'
 
-/**
- * Convert screen coordinates to 0-100% relative to the inner content div.
- * Uses the content div's transformed bounding rect so zoom/pan are handled.
- */
 function screenToContentPercent(
   clientX: number,
   clientY: number,
@@ -50,6 +48,8 @@ export function MapCanvas({
   onStartDragPin,
   onMovePin,
   onEndDragPin,
+  onRotatePin,
+  onEndRotatePin,
   onDropFromLeftPane,
   onDropFiles,
 }: Props) {
@@ -68,7 +68,11 @@ export function MapCanvas({
     const { x, y } = screenToContentPercent(e.clientX, e.clientY, contentRef.current)
     setPreviewCoord({ x, y })
   }
-  const handleDragLeave = () => setPreviewCoord(null)
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setPreviewCoord(null)
+    }
+  }
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setPreviewCoord(null)
@@ -87,64 +91,101 @@ export function MapCanvas({
     }
   }
 
-  // --- Pin drag (moving a placed pin) ----------------------------------
-  const pinDragState = useRef<{
+  // --- Pin pointer interactions (drag + rotate) ------------------------
+  const interactionState = useRef<{
     id: string
+    mode: 'pending' | 'drag' | 'rotate'
     startX: number
     startY: number
     startedAt: number
-    committed: boolean
     lastX: number
     lastY: number
+    lastDeg: number
+    pinX: number
+    pinY: number
   } | null>(null)
 
-  const handlePinMouseDown = useCallback(
-    (photoId: string) => (e: React.MouseEvent) => {
+  const handlePinPointerDown = useCallback(
+    (photoId: string, photo: Photo) => (e: React.PointerEvent) => {
       e.stopPropagation()
-      pinDragState.current = {
+      e.preventDefault()
+
+      const isRotate = (e.target as HTMLElement).dataset?.action === 'rotate'
+      const initX = photo.pin_x ?? 50
+      const initY = photo.pin_y ?? 50
+
+      interactionState.current = {
         id: photoId,
+        mode: isRotate ? 'rotate' : 'pending',
         startX: e.clientX,
         startY: e.clientY,
         startedAt: Date.now(),
-        committed: false,
-        lastX: 0,
-        lastY: 0,
+        lastX: initX,
+        lastY: initY,
+        lastDeg: photo.direction_deg,
+        pinX: initX,
+        pinY: initY,
       }
 
-      const onMove = (ev: MouseEvent) => {
-        const state = pinDragState.current
+      if (isRotate) {
+        onSelect(photoId)
+      }
+
+      const onMove = (ev: PointerEvent) => {
+        const state = interactionState.current
         if (!state) return
-        const dx = ev.clientX - state.startX
-        const dy = ev.clientY - state.startY
-        const dist = Math.hypot(dx, dy)
-        const elapsed = Date.now() - state.startedAt
-        if (
-          !state.committed &&
-          (dist >= DRAG_DISTANCE_THRESHOLD || elapsed >= DRAG_HOLD_THRESHOLD_MS)
-        ) {
-          state.committed = true
-          onStartDragPin(state.id)
+
+        if (state.mode === 'rotate') {
+          if (!contentRef.current) return
+          const rect = contentRef.current.getBoundingClientRect()
+          const pinScreenX = rect.left + (state.pinX / 100) * rect.width
+          const pinScreenY = rect.top + (state.pinY / 100) * rect.height
+          const dx = ev.clientX - pinScreenX
+          const dy = ev.clientY - pinScreenY
+          const rad = Math.atan2(dy, dx)
+          const deg = ((rad * 180) / Math.PI + 90 + 360) % 360
+          state.lastDeg = Math.round(deg)
+          onRotatePin(state.id, state.lastDeg)
+          return
         }
-        if (state.committed && contentRef.current) {
+
+        if (state.mode === 'pending') {
+          const dx = ev.clientX - state.startX
+          const dy = ev.clientY - state.startY
+          const dist = Math.hypot(dx, dy)
+          const elapsed = Date.now() - state.startedAt
+          if (dist >= DRAG_DISTANCE_THRESHOLD || elapsed >= DRAG_HOLD_THRESHOLD_MS) {
+            state.mode = 'drag'
+            onStartDragPin(state.id)
+          }
+        }
+
+        if (state.mode === 'drag' && contentRef.current) {
           const { x, y } = screenToContentPercent(ev.clientX, ev.clientY, contentRef.current)
           state.lastX = x
           state.lastY = y
           onMovePin(state.id, x, y)
         }
       }
+
       const onUp = () => {
-        const state = pinDragState.current
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        pinDragState.current = null
-        if (state?.committed) {
+        const state = interactionState.current
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        interactionState.current = null
+
+        if (!state) return
+        if (state.mode === 'drag') {
           onEndDragPin(state.id, state.lastX, state.lastY)
+        } else if (state.mode === 'rotate') {
+          onEndRotatePin(state.id, state.lastDeg)
         }
       }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
     },
-    [onStartDragPin, onMovePin, onEndDragPin],
+    [onStartDragPin, onMovePin, onEndDragPin, onRotatePin, onEndRotatePin, onSelect],
   )
 
   return (
@@ -188,7 +229,7 @@ export function MapCanvas({
                   e.stopPropagation()
                   onSelect(photo.id)
                 }}
-                onMouseDown={handlePinMouseDown(photo.id)}
+                onPointerDown={handlePinPointerDown(photo.id, photo)}
               />
             ))}
             <DropPreviewOverlay xPct={previewCoord?.x ?? null} yPct={previewCoord?.y ?? null} />

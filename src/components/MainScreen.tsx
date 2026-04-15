@@ -119,6 +119,9 @@ export function MainScreen({ userName, onChangeName }: Props) {
     (e: React.DragEvent, photo: Photo) => {
       e.dataTransfer.setData('application/x-ohp-photo-id', photo.id)
       e.dataTransfer.effectAllowed = 'move'
+      const ghost = new Image()
+      ghost.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+      e.dataTransfer.setDragImage(ghost, 0, 0)
     },
     [],
   )
@@ -158,9 +161,9 @@ export function MainScreen({ userName, onChangeName }: Props) {
   // --- Drop a photo onto a different zone in the left pane ----------
   const handleDropOnZone = useCallback(
     async (e: React.DragEvent, zone: ZoneId) => {
+      e.preventDefault()
       const photoId = e.dataTransfer.getData('application/x-ohp-photo-id')
       if (!photoId) return
-      e.preventDefault()
       const photo = photos.find((p) => p.id === photoId)
       if (!photo || photo.zone === zone) return
       updatePhoto(photoId, { zone, zone_rank: null })
@@ -190,6 +193,24 @@ export function MainScreen({ userName, onChangeName }: Props) {
       setDraggingId(null)
       try {
         await placePhotoOnMap(id, xPct, yPct)
+      } catch (err) {
+        toast.error((err as Error).message || 'Save failed')
+      }
+    },
+    [],
+  )
+
+  // --- Pin rotate on the map ----------------------------------------
+  const handleRotatePin = useCallback(
+    (id: string, directionDeg: number) => {
+      updatePhoto(id, { direction_deg: directionDeg })
+    },
+    [updatePhoto],
+  )
+  const handleEndRotatePin = useCallback(
+    async (id: string, directionDeg: number) => {
+      try {
+        await updatePhotoDb(id, { direction_deg: directionDeg })
       } catch (err) {
         toast.error((err as Error).message || 'Save failed')
       }
@@ -296,8 +317,6 @@ export function MainScreen({ userName, onChangeName }: Props) {
   }, [downloading, photos, visibleConcepts.length])
 
   // --- Render --------------------------------------------------------
-  const mainTab = tab
-
   if (!loaded) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-gray-50">
@@ -326,7 +345,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
       />
 
       <div className="flex min-h-0 flex-1">
-        {mainTab === 'concept' && (
+        {tab === 'concept' && (
           <>
             <LeftPane
               unusedConcepts={unusedConcepts}
@@ -344,10 +363,15 @@ export function MainScreen({ userName, onChangeName }: Props) {
                   visiblePhotos={visibleConcepts}
                   selectedId={selectedId}
                   draggingId={draggingId}
-                  onSelect={setSelectedId}
+                  onSelect={(id) => {
+                    setSelectedId(id)
+                    if (id) setPreviewPhotoId(id)
+                  }}
                   onStartDragPin={handlePinDragStart}
                   onMovePin={handlePinMove}
                   onEndDragPin={handlePinDragEnd}
+                  onRotatePin={handleRotatePin}
+                  onEndRotatePin={handleEndRotatePin}
                   onDropFromLeftPane={handleDropOnMap}
                   onDropFiles={handleDropFilesOnMap}
                 />
@@ -365,7 +389,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
           </>
         )}
 
-        {mainTab === 'real' && (
+        {tab === 'real' && (
           <RealPhotosView
             realPhotos={realPhotos}
             conceptPhotos={conceptPhotos}
@@ -374,7 +398,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
           />
         )}
 
-        {mainTab === 'trash' && (
+        {tab === 'trash' && (
           <SimpleGallery
             title="Trash"
             emptyText="Trash is empty."
@@ -418,6 +442,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
       {previewPhoto && (
         <ConceptPreviewModal
+          key={previewPhoto.id}
           concept={previewPhoto}
           realPhotos={realPhotos}
           userName={userName}

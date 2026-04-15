@@ -71,6 +71,7 @@ export function useSupabaseData(props: UseSupabaseDataProps) {
       } catch (err) {
         console.error('Failed to load data:', err)
         lifecycleRef.current.onError?.((err as Error).message || 'Failed to load data')
+        lifecycleRef.current.onLoaded?.()
       }
     }
 

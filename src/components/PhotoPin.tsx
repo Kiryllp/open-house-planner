@@ -8,10 +8,10 @@ interface PhotoPinProps {
   photo: Photo
   selected: boolean
   onClick: (e: React.MouseEvent) => void
-  onMouseDown: (e: React.MouseEvent) => void
+  onPointerDown: (e: React.PointerEvent) => void
 }
 
-export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMouseDown }: PhotoPinProps) {
+export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onPointerDown }: PhotoPinProps) {
   if (photo.pin_x == null || photo.pin_y == null) return null
 
   const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
@@ -32,19 +32,17 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMou
 
   return (
     <div
-      className="absolute group"
+      className="pin-element absolute group"
       style={{
         left: `${photo.pin_x}%`,
         top: `${photo.pin_y}%`,
         transform: 'translate(-50%, -50%)',
         zIndex: selected ? 20 : 10,
         pointerEvents: 'auto',
-        transition: 'opacity 0.2s ease',
+        touchAction: 'none',
       }}
       data-pin-id={photo.id}
-      data-pin-kind="photo"
     >
-      {/* Cone SVG */}
       <svg
         className="absolute pointer-events-none"
         style={{
@@ -81,7 +79,29 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMou
         )}
       </svg>
 
-      {/* Pin thumbnail */}
+      {/* Rotation handle at cone tip — only when selected */}
+      {selected && (
+        <div
+          className="pin-handle"
+          data-action="rotate"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            transform: `translate(calc(-50% + ${centerX}px), calc(-50% + ${centerY}px))`,
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            backgroundColor: color,
+            border: '2px solid white',
+            cursor: 'crosshair',
+            zIndex: 3,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+          }}
+          onPointerDown={onPointerDown}
+        />
+      )}
+
       <img
         src={photo.file_url}
         alt=""
@@ -100,7 +120,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onClick, onMou
           zIndex: 2,
         }}
         onClick={onClick}
-        onMouseDown={onMouseDown}
+        onPointerDown={onPointerDown}
       />
     </div>
   )

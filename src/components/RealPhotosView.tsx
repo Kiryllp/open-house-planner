@@ -65,6 +65,7 @@ function RealPhotoRow({
   const [editName, setEditName] = useState(real.name ?? '')
   const [selectedForLink, setSelectedForLink] = useState<Set<string>>(new Set())
   const [pickerSearch, setPickerSearch] = useState('')
+  const [pickerZoneFilter, setPickerZoneFilter] = useState<ZoneId | null>(null)
 
   const linkedConcepts = useMemo(
     () => conceptPhotos.filter((c) => c.linked_real_id === real.id),
@@ -78,6 +79,9 @@ function RealPhotoRow({
 
   const filteredUnlinked = useMemo(() => {
     let list = unlinkedConcepts
+    if (pickerZoneFilter) {
+      list = list.filter((c) => c.zone === pickerZoneFilter)
+    }
     if (pickerSearch.trim()) {
       const q = pickerSearch.toLowerCase()
       list = list.filter((c) => c.name?.toLowerCase().includes(q))
@@ -96,7 +100,7 @@ function RealPhotoRow({
       }
       return (a.name ?? '').localeCompare(b.name ?? '')
     })
-  }, [unlinkedConcepts, real.zone, real.name, pickerSearch])
+  }, [unlinkedConcepts, real.zone, real.name, pickerSearch, pickerZoneFilter])
 
   async function handleChangeZone(zone: ZoneId) {
     if (busy) return
@@ -129,19 +133,6 @@ function RealPhotoRow({
       await Promise.all(ids.map((id) => linkConceptToReal(id, real.id)))
       toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
       setSelectedForLink(new Set())
-    } catch (err) {
-      toast.error((err as Error).message || 'Link failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleLinkConcept(conceptId: string) {
-    if (busy) return
-    setBusy(true)
-    try {
-      await linkConceptToReal(conceptId, real.id)
-      toast.success('Linked')
     } catch (err) {
       toast.error((err as Error).message || 'Link failed')
     } finally {
@@ -191,7 +182,7 @@ function RealPhotoRow({
             src={real.file_url}
             alt=""
             loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain"
           />
         </button>
 
@@ -257,6 +248,7 @@ function RealPhotoRow({
                     const stem = (real.name ?? '').replace(/_v\d+$/i, '')
                     setPickerSearch(stem)
                     setSelectedForLink(new Set())
+                    setPickerZoneFilter(real.zone)
                   }
                 }}
                 className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-blue-700"
@@ -270,7 +262,7 @@ function RealPhotoRow({
                 No concepts linked yet.
               </div>
             ) : linkedConcepts.length > 0 ? (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {linkedConcepts.map((concept) => (
                   <div
                     key={concept.id}
@@ -309,6 +301,29 @@ function RealPhotoRow({
           {/* Concept picker */}
           {pickerOpen && (
             <div>
+              <div className="mb-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPickerZoneFilter(null)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${
+                    !pickerZoneFilter ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  All
+                </button>
+                {ZONE_IDS.map((z) => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => setPickerZoneFilter(z === pickerZoneFilter ? null : z)}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${
+                      z === pickerZoneFilter ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    Z{z}
+                  </button>
+                ))}
+              </div>
               <input
                 type="text"
                 value={pickerSearch}
@@ -351,7 +366,7 @@ function RealPhotoRow({
                   {unlinkedConcepts.length === 0 ? 'All concepts are already linked.' : 'No matches. Try a different search.'}
                 </div>
               ) : (
-                <div className="grid max-h-[40vh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+                <div className="grid max-h-[40vh] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
                   {filteredUnlinked.map((concept) => {
                     const isSelected = selectedForLink.has(concept.id)
                     return (

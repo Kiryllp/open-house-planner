@@ -33,9 +33,6 @@ export function ConceptPreviewModal({
   const [showPicker, setShowPicker] = useState(!concept.linked_real_id)
   const [notes, setNotes] = useState(concept.notes ?? '')
   const [editName, setEditName] = useState(concept.name ?? '')
-  const [direction, setDirection] = useState(concept.direction_deg)
-  const [fov, setFov] = useState(concept.fov_deg)
-  const [coneLen, setConeLen] = useState(concept.cone_length)
 
   const linkedReal = useMemo(
     () => realPhotos.find((r) => r.id === concept.linked_real_id) ?? null,
@@ -170,22 +167,6 @@ export function ConceptPreviewModal({
     }
   }
 
-  async function handleSaveCone() {
-    if (busy) return
-    setBusy(true)
-    try {
-      await updatePhotoDb(concept.id, {
-        direction_deg: direction,
-        fov_deg: fov,
-        cone_length: coneLen,
-      })
-    } catch (err) {
-      toast.error((err as Error).message || 'Cone update failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const isConcept = concept.type === 'concept'
   const needsZone = concept.zone == null
 
@@ -278,58 +259,6 @@ export function ConceptPreviewModal({
                 ))}
               </div>
             </section>
-
-            {isConcept && concept.pin_x != null && (
-              <section className="border-b border-gray-100 p-4">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-700">
-                  Cone / Direction
-                </h3>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-[11px] text-gray-600">
-                    <span className="w-16 shrink-0">Direction</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={360}
-                      value={direction}
-                      onChange={(e) => setDirection(Number(e.target.value))}
-                      onMouseUp={handleSaveCone}
-                      onTouchEnd={handleSaveCone}
-                      className="flex-1"
-                    />
-                    <span className="w-8 text-right tabular-nums">{direction}°</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-[11px] text-gray-600">
-                    <span className="w-16 shrink-0">FOV</span>
-                    <input
-                      type="range"
-                      min={10}
-                      max={180}
-                      value={fov}
-                      onChange={(e) => setFov(Number(e.target.value))}
-                      onMouseUp={handleSaveCone}
-                      onTouchEnd={handleSaveCone}
-                      className="flex-1"
-                    />
-                    <span className="w-8 text-right tabular-nums">{fov}°</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-[11px] text-gray-600">
-                    <span className="w-16 shrink-0">Length</span>
-                    <input
-                      type="range"
-                      min={20}
-                      max={300}
-                      value={coneLen}
-                      onChange={(e) => setConeLen(Number(e.target.value))}
-                      onMouseUp={handleSaveCone}
-                      onTouchEnd={handleSaveCone}
-                      className="flex-1"
-                    />
-                    <span className="w-8 text-right tabular-nums">{coneLen}</span>
-                  </label>
-                </div>
-              </section>
-            )}
 
             <section className="border-b border-gray-100 p-4">
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-700">
