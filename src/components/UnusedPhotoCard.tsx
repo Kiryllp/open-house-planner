@@ -42,12 +42,14 @@ export const UnusedPhotoCard = memo(function UnusedPhotoCard({
       }`}
       title={photo.notes ?? ''}
     >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={photo.file_url}
         alt=""
         draggable={false}
         loading="lazy"
         className="absolute inset-0 h-full w-full object-cover"
+        style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
       />
 
       {/* Rank badge (Primary / Secondary / Tertiary) */}

@@ -32,17 +32,18 @@ interface Props {
 
 const FLOORPLAN_URL = process.env.NEXT_PUBLIC_FLOORPLAN_URL ?? null
 
-// 1x1 transparent canvas used as the native drag image. Canvas is
-// synchronously available (no decode/load step) so the browser never
-// falls back to its default drag preview.
-let _emptyCanvas: HTMLCanvasElement | null = null
-function getEmptyDragCanvas(): HTMLCanvasElement {
-  if (!_emptyCanvas) {
-    _emptyCanvas = document.createElement('canvas')
-    _emptyCanvas.width = 1
-    _emptyCanvas.height = 1
+// Invisible element used as the native drag image. Must be in the DOM
+// (Chrome/Safari ignore detached elements) and nearly transparent.
+function getEmptyDragEl(): HTMLElement {
+  let el = document.getElementById('__ohp-drag-ghost') as HTMLElement | null
+  if (!el) {
+    el = document.createElement('div')
+    el.id = '__ohp-drag-ghost'
+    el.style.cssText =
+      'position:fixed;top:-100px;left:-100px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1;'
+    document.body.appendChild(el)
   }
-  return _emptyCanvas
+  return el
 }
 
 export function MainScreen({ userName, onChangeName }: Props) {
@@ -138,9 +139,13 @@ export function MainScreen({ userName, onChangeName }: Props) {
 
   const handleLeftPaneDragStart = useCallback(
     (e: React.DragEvent, photo: Photo) => {
+      // Clear Chrome's auto-populated URL types (from the <img src> inside
+      // the card) — these cause the macOS globe cursor badge.
+      e.dataTransfer.clearData()
       e.dataTransfer.setData('application/x-ohp-photo-id', photo.id)
+      e.dataTransfer.setData('text/plain', '')
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setDragImage(getEmptyDragCanvas(), 0, 0)
+      e.dataTransfer.setDragImage(getEmptyDragEl(), 0, 0)
 
       // Suppress the browser's native drag cursor (globe / no-entry)
       // SYNCHRONOUSLY during dragstart — before any dragover event fires.
@@ -364,7 +369,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
         onUploadFiles={handleFiles}
         onPrintMap={handlePrintMap}
         onDownloadOriginals={handleExportProject}
-        downloading={exportOpen}
+        downloading={false}
       />
 
       <div className="flex min-h-0 flex-1">
