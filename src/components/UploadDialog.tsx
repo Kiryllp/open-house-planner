@@ -7,6 +7,8 @@ import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS, zoneRankLabel } from '@/lib/types'
 import { parseZonesFromFilename } from '@/lib/parseZones'
 import { insertPhotosTracked, uploadPhoto, type PhotoInsert } from '@/lib/supabaseActions'
+import { hashFile } from '@/lib/hashFile'
+import { createClient } from '@/lib/supabase/client'
 
 type PendingType = 'concept' | 'real'
 
@@ -83,12 +85,94 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
   async function handleConfirm() {
     if (!canSubmit || uploading) return
     setUploading(true)
-    const total = pending.length
-    setUploadProgress({ done: 0, total })
+    setUploadProgress({ done: 0, total: pending.length })
 
+    // Phase 1: hash every pending file and drop duplicates — both
+    // intra-batch (user dropped the same file twice) and against the DB
+    // (any photo row with a matching content_hash, active or trashed,
+    // blocks re-upload until it's hard-deleted from Trash).
+    const hashConcurrency = 3
+    const hashQueue = [...pending]
+    const hashes = new Map<PendingFile, string>()
+    async function hashWorker() {
+      while (hashQueue.length > 0) {
+        const entry = hashQueue.shift()
+        if (!entry) break
+        try {
+          hashes.set(entry, await hashFile(entry.file))
+        } catch (err) {
+          console.warn('hashFile failed', entry.file.name, err)
+          // Fall through — missing hash means no match, upload proceeds.
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: hashConcurrency }, () => hashWorker()),
+    )
+
+    // Intra-batch dedup: if the user dropped the same file twice, keep
+    // the first and drop the rest.
+    const seenHash = new Set<string>()
+    const intraBatchUnique: PendingFile[] = []
+    let intraBatchDropped = 0
+    for (const entry of pending) {
+      const h = hashes.get(entry)
+      if (!h) {
+        intraBatchUnique.push(entry)
+        continue
+      }
+      if (seenHash.has(h)) {
+        intraBatchDropped += 1
+        continue
+      }
+      seenHash.add(h)
+      intraBatchUnique.push(entry)
+    }
+
+    // DB dedup: one batch query for every unique hash at once.
+    const hashList = [...seenHash]
+    let existingHashes = new Set<string>()
+    if (hashList.length > 0) {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('photos')
+        .select('content_hash')
+        .in('content_hash', hashList)
+      if (error) {
+        console.error('dedup query failed', error)
+        // Non-fatal — fall through and let the upload proceed.
+      } else {
+        const rows = (data ?? []) as Array<{ content_hash: string | null }>
+        existingHashes = new Set(
+          rows
+            .map((r) => r.content_hash)
+            .filter((h): h is string => !!h),
+        )
+      }
+    }
+
+    const toUpload = intraBatchUnique.filter(
+      (entry) => !existingHashes.has(hashes.get(entry) ?? ''),
+    )
+    const dbDropped = intraBatchUnique.length - toUpload.length
+    const totalDropped = intraBatchDropped + dbDropped
+
+    if (toUpload.length === 0) {
+      setUploading(false)
+      if (totalDropped > 0) {
+        toast.info(
+          `All ${totalDropped} file${totalDropped > 1 ? 's' : ''} already uploaded — nothing to do.`,
+        )
+        onClose()
+      }
+      return
+    }
+
+    // Phase 2: upload the surviving files using the existing worker pool.
+    setUploadProgress({ done: 0, total: toUpload.length })
     const allInserted: Photo[] = []
     let errorCount = 0
-    const queue = [...pending]
+    const queue = [...toUpload]
 
     async function worker() {
       while (queue.length > 0) {
@@ -102,6 +186,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
               : `upload-${Date.now()}-${Math.random()}`
 
           const photoName = entry.file.name.replace(/\.[^.]+$/, '')
+          const contentHash = hashes.get(entry) ?? null
 
           if (entry.type === 'real') {
             const row: PhotoInsert = basePhoto({
@@ -112,6 +197,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
               source_upload_id: sourceUploadId,
               userName,
               name: photoName,
+              content_hash: contentHash,
             })
             const inserted = await insertPhotosTracked([row], userName)
             allInserted.push(...inserted)
@@ -125,6 +211,7 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
                 source_upload_id: sourceUploadId,
                 userName,
                 name: photoName,
+                content_hash: contentHash,
               }),
             )
             const inserted = await insertPhotosTracked(rows, userName)
@@ -145,9 +232,15 @@ export function UploadDialog({ files, userName, onClose, onInserted }: Props) {
     if (allInserted.length > 0) {
       onInserted(allInserted)
     }
-    const successCount = total - errorCount
+    const successCount = toUpload.length - errorCount
     if (successCount > 0) {
-      toast.success(`Uploaded ${successCount} file(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`)
+      const suffix = errorCount > 0 ? `, ${errorCount} failed` : ''
+      toast.success(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''}${suffix}`)
+    }
+    if (totalDropped > 0) {
+      toast.info(
+        `Skipped ${totalDropped} duplicate${totalDropped > 1 ? 's' : ''}.`,
+      )
     }
     setUploading(false)
     if (errorCount === 0) {
@@ -304,6 +397,7 @@ function basePhoto(args: {
   source_upload_id: string
   userName: string
   name: string | null
+  content_hash: string | null
 }): PhotoInsert {
   return {
     file_url: args.file_url,
@@ -311,6 +405,7 @@ function basePhoto(args: {
     zone: args.zone,
     zone_rank: args.zone_rank,
     source_upload_id: args.source_upload_id,
+    content_hash: args.content_hash,
     pin_x: null,
     pin_y: null,
     direction_deg: 0,

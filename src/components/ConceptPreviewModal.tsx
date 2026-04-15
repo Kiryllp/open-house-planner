@@ -16,6 +16,7 @@ import {
   uploadPhoto,
   type PhotoInsert,
 } from '@/lib/supabaseActions'
+import { hashFile } from '@/lib/hashFile'
 
 type Tab = 'overview' | 'history'
 
@@ -90,6 +91,15 @@ export function ConceptPreviewModal({
     setBusy(true)
     try {
       const file = files[0]
+      // Hash first so the new row carries content_hash, same as the
+      // UploadDialog path. We don't dedup-check here — the user is
+      // explicitly linking a fresh real to this concept.
+      let contentHash: string | null = null
+      try {
+        contentHash = await hashFile(file)
+      } catch (err) {
+        console.warn('hashFile failed in handleUploadNewReal', err)
+      }
       const fileUrl = await uploadPhoto(file)
       const sourceUploadId =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -101,6 +111,7 @@ export function ConceptPreviewModal({
         zone: null,
         zone_rank: null,
         source_upload_id: sourceUploadId,
+        content_hash: contentHash,
         pin_x: null,
         pin_y: null,
         direction_deg: 0,

@@ -14,6 +14,12 @@ export interface Photo {
   // All rows created from the same file share the same source_upload_id.
   source_upload_id: string | null
 
+  // SHA-256 (lowercase hex) of the raw uploaded file bytes. Byte-identical
+  // files collide on this column, so the upload dedup check in
+  // UploadDialog blocks re-uploads. Null on legacy rows created before
+  // migration 010 until the one-time backfill pass populates them.
+  content_hash: string | null
+
   // Map placement. pin_x === null means the photo is in the left pane
   // (unused). pin_x / pin_y are 0..100 percentages of the floorplan.
   pin_x: number | null
