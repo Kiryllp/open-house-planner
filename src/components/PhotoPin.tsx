@@ -132,16 +132,31 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
           stroke={color}
           strokeOpacity={selected ? 0.7 : 0.4}
           strokeWidth={selected ? 1.5 : 1}
+          style={{ pointerEvents: 'auto', cursor: 'default' }}
+          onPointerEnter={onEnter}
+          onPointerLeave={onLeave}
         />
         {showHandle && (
-          <line
-            x1={svgCenter} y1={svgCenter}
-            x2={centerX + svgCenter} y2={centerY + svgCenter}
-            stroke={color}
-            strokeOpacity={selected ? 0.5 : 0.35}
-            strokeWidth={1}
-            strokeDasharray="4 3"
-          />
+          <>
+            {/* Invisible wide hit area so the cursor doesn't fall between cone and handle */}
+            <line
+              x1={svgCenter} y1={svgCenter}
+              x2={centerX + svgCenter} y2={centerY + svgCenter}
+              stroke="transparent"
+              strokeWidth={14}
+              style={{ pointerEvents: 'stroke' }}
+              onPointerEnter={onEnter}
+              onPointerLeave={onLeave}
+            />
+            <line
+              x1={svgCenter} y1={svgCenter}
+              x2={centerX + svgCenter} y2={centerY + svgCenter}
+              stroke={color}
+              strokeOpacity={selected ? 0.5 : 0.35}
+              strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+          </>
         )}
       </svg>
 
@@ -150,6 +165,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
           ref={rotateRef}
           className="pin-handle"
           onPointerEnter={onEnter}
+          onPointerLeave={onLeave}
           style={{
             position: 'absolute',
             left: '50%',
