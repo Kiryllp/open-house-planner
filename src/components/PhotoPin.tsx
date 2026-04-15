@@ -7,6 +7,7 @@ import type { Photo } from '@/lib/types'
 interface PhotoPinProps {
   photo: Photo
   selected: boolean
+  dragging?: boolean
   onInteraction: (e: PointerEvent, action: 'move' | 'rotate') => void
 }
 
@@ -46,7 +47,7 @@ function usePinPointerHandler(handler: (e: PointerEvent) => void) {
   }, [])
 }
 
-export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction }: PhotoPinProps) {
+export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onInteraction }: PhotoPinProps) {
   const [hovered, setHovered] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -100,6 +101,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
         top: `${photo.pin_y}%`,
         transform: 'translate(-50%, -50%)',
         zIndex: selected ? 20 : hovered ? 15 : 10,
+        opacity: dragging ? 0 : undefined,
         pointerEvents: 'auto',
         touchAction: 'none',
       }}
@@ -198,5 +200,6 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction 
   )
 }, (prev, next) =>
   prev.photo === next.photo &&
-  prev.selected === next.selected
+  prev.selected === next.selected &&
+  prev.dragging === next.dragging
 )

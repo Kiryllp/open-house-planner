@@ -38,8 +38,10 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [leftPaneDragPhoto, setLeftPaneDragPhoto] = useState<Photo | null>(null)
+  const [draggingMapPhoto, setDraggingMapPhoto] = useState<Photo | null>(null)
   const [ghostDropping, setGhostDropping] = useState(false)
   const ghostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const photosRef = useRef<Photo[]>([])
   const [tab, setTab] = useState<TopTab>('concept')
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
@@ -65,6 +67,8 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const removePhoto = useCallback((id: string) => {
     setPhotosState((prev) => prev.filter((p) => p.id !== id))
   }, [])
+
+  photosRef.current = photos
 
   useSupabaseData({
     setPhotos,
@@ -194,6 +198,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const handlePinDragStart = useCallback((id: string) => {
     setDraggingId(id)
     setSelectedId(id)
+    setDraggingMapPhoto(photosRef.current.find((p) => p.id === id) ?? null)
   }, [])
   const handlePinMove = useCallback(
     (id: string, xPct: number, yPct: number) => {
@@ -204,6 +209,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const handlePinDragEnd = useCallback(
     async (id: string, xPct: number, yPct: number) => {
       setDraggingId(null)
+      setDraggingMapPhoto(null)
       try {
         await placePhotoOnMap(id, xPct, yPct)
       } catch (err) {
@@ -470,7 +476,12 @@ export function MainScreen({ userName, onChangeName }: Props) {
         photos={visibleConcepts}
       />
 
-      {leftPaneDragPhoto && <DragGhost photo={leftPaneDragPhoto} dropping={ghostDropping} />}
+      {(leftPaneDragPhoto || draggingMapPhoto) && (
+        <DragGhost
+          photo={(leftPaneDragPhoto || draggingMapPhoto)!}
+          dropping={ghostDropping && !!leftPaneDragPhoto}
+        />
+      )}
     </div>
   )
 }

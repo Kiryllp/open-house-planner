@@ -330,6 +330,7 @@ export function MapCanvas({
                 key={photo.id}
                 photo={photo}
                 selected={photo.id === selectedId}
+                dragging={photo.id === draggingId}
                 onInteraction={handleInteraction(photo.id, photo)}
               />
             ))}

@@ -11,12 +11,15 @@ interface Props {
 }
 
 /**
- * Viewport-level teardrop map-pin that follows the cursor during an HTML5 drag.
- * The pointed tail sits at the cursor position so the exact drop pixel is
- * unambiguous. Renders via portal to document.body at position: fixed.
+ * Viewport-level teardrop map-pin that follows the cursor during any drag
+ * (HTML5 left-pane drag or pointer-based on-map drag). The pointed tail sits
+ * at the cursor position so the exact drop pixel is unambiguous.
  *
- * Position is driven by a capture-phase `dragover` listener on `window`,
- * written to the DOM via rAF — zero React re-renders during movement.
+ * Position is tracked via both `dragover` (HTML5 DnD) and `pointermove`
+ * (on-map pin drags) in capture phase, written to the DOM via rAF.
+ *
+ * Also suppresses the browser's native drag cursor (globe / no-entry icon)
+ * by calling preventDefault on dragover at the document level.
  */
 export function DragGhost({ photo, dropping }: Props) {
   const ghostRef = useRef<HTMLDivElement>(null)
@@ -25,12 +28,12 @@ export function DragGhost({ photo, dropping }: Props) {
   useEffect(() => {
     let appeared = false
 
-    const onDragOver = (e: DragEvent) => {
+    const updatePos = (x: number, y: number) => {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = requestAnimationFrame(() => {
         const el = ghostRef.current
         if (!el) return
-        el.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`
+        el.style.transform = `translate(${x}px, ${y}px)`
         if (!appeared) {
           appeared = true
           el.style.opacity = '1'
@@ -38,9 +41,27 @@ export function DragGhost({ photo, dropping }: Props) {
       })
     }
 
+    const onDragOver = (e: DragEvent) => updatePos(e.clientX, e.clientY)
+    const onPointerMove = (e: PointerEvent) => updatePos(e.clientX, e.clientY)
+
+    // Suppress browser's native drag cursor by making everything a valid
+    // drop target visually. Actual drop handling is still in MapCanvas only.
+    const suppressCursor = (e: DragEvent) => {
+      e.preventDefault()
+    }
+    const suppressDrop = (e: DragEvent) => {
+      e.preventDefault()
+    }
+
     window.addEventListener('dragover', onDragOver, true)
+    window.addEventListener('pointermove', onPointerMove, true)
+    document.addEventListener('dragover', suppressCursor)
+    document.addEventListener('drop', suppressDrop)
     return () => {
       window.removeEventListener('dragover', onDragOver, true)
+      window.removeEventListener('pointermove', onPointerMove, true)
+      document.removeEventListener('dragover', suppressCursor)
+      document.removeEventListener('drop', suppressDrop)
       cancelAnimationFrame(rafRef.current)
     }
   }, [])
@@ -64,7 +85,7 @@ export function DragGhost({ photo, dropping }: Props) {
         transition: 'opacity 180ms ease-out',
       }}
     >
-      {/* Shadow at tip point — tight oval on the "surface" beneath the pin */}
+      {/* Shadow at tip point */}
       <div
         className="dg-shadow"
         style={{
@@ -140,7 +161,7 @@ export function DragGhost({ photo, dropping }: Props) {
           50%      { opacity: 0.18; transform: scaleX(1.4); }
         }
 
-        /* Settle on drop: pin drops down, shrinks, fades */
+        /* Settle on drop */
         [data-dropping="true"] {
           transition: opacity 200ms ease-out !important;
           opacity: 0 !important;
