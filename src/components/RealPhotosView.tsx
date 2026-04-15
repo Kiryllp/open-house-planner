@@ -126,7 +126,7 @@ function RealPhotoRow({
   async function handleSaveName() {
     const trimmed = editName.trim()
     const newName = trimmed || null
-    if (newName === (real.name ?? '')) return
+    if (newName === real.name) return
     if (busy) return
     setBusy(true)
     try {

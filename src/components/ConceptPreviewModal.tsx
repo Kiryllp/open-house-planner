@@ -154,7 +154,7 @@ export function ConceptPreviewModal({
   async function handleSaveName() {
     const trimmed = editName.trim()
     const newName = trimmed || null
-    if (newName === (concept.name ?? '')) return
+    if (newName === concept.name) return
     if (busy) return
     setBusy(true)
     try {

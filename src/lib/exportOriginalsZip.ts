@@ -25,7 +25,6 @@ export async function buildExportZip(
   )
 
   const zip = new JSZip()
-  const seenUrls = new Map<string, string>()
 
   // Build numbered entries
   const entries: Array<{
@@ -46,16 +45,19 @@ export async function buildExportZip(
     entries.push({ index: i + 1, photo, folder, filename })
   }
 
-  // Download images into zone folders
+  // Download images into zone folders (cache blobs for sibling duplicates)
+  const blobCache = new Map<string, Blob>()
   for (const entry of entries) {
     const subFolder = zip.folder(entry.folder)!
-    if (seenUrls.has(entry.photo.file_url)) continue
-    seenUrls.set(entry.photo.file_url, entry.filename)
 
     try {
-      const res = await fetch(entry.photo.file_url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
+      let blob = blobCache.get(entry.photo.file_url)
+      if (!blob) {
+        const res = await fetch(entry.photo.file_url)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        blob = await res.blob()
+        blobCache.set(entry.photo.file_url, blob)
+      }
       subFolder.file(entry.filename, blob)
     } catch (err) {
       subFolder.file(
