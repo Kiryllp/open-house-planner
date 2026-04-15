@@ -1,10 +1,10 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
 import type { Photo } from '@/lib/types'
-import { screenToPercent, DRAG_DISTANCE_THRESHOLD, DRAG_HOLD_THRESHOLD_MS } from '@/lib/coords'
+import { DRAG_DISTANCE_THRESHOLD, DRAG_HOLD_THRESHOLD_MS } from '@/lib/coords'
 import { PhotoPin } from './PhotoPin'
 import { DropPreviewOverlay } from './DropPreviewOverlay'
 
@@ -16,12 +16,30 @@ interface Props {
   onSelect: (id: string | null) => void
   onStartDragPin: (id: string) => void
   onMovePin: (id: string, xPct: number, yPct: number) => void
-  onEndDragPin: (id: string) => void
+  onEndDragPin: (id: string, xPct: number, yPct: number) => void
   onDropFromLeftPane: (photoId: string, xPct: number, yPct: number) => void
   onDropFiles: (files: File[]) => void
 }
 
 const DRAG_MIME = 'application/x-ohp-photo-id'
+
+/**
+ * Convert screen coordinates to 0-100% relative to the inner content div.
+ * Uses the content div's transformed bounding rect so zoom/pan are handled.
+ */
+function screenToContentPercent(
+  clientX: number,
+  clientY: number,
+  contentEl: HTMLDivElement,
+): { x: number; y: number } {
+  const rect = contentEl.getBoundingClientRect()
+  const x = ((clientX - rect.left) / rect.width) * 100
+  const y = ((clientY - rect.top) / rect.height) * 100
+  return {
+    x: Math.max(0, Math.min(100, x)),
+    y: Math.max(0, Math.min(100, y)),
+  }
+}
 
 export function MapCanvas({
   floorplanUrl,
@@ -35,7 +53,7 @@ export function MapCanvas({
   onDropFromLeftPane,
   onDropFiles,
 }: Props) {
-  const surfaceRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const [previewCoord, setPreviewCoord] = useState<{ x: number; y: number } | null>(null)
 
   // --- HTML5 drag (from left pane) -------------------------------------
@@ -46,18 +64,16 @@ export function MapCanvas({
     if (!fromPane && !fromOs) return
     e.preventDefault()
     e.dataTransfer.dropEffect = fromOs ? 'copy' : 'move'
-    const rect = surfaceRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const { x, y } = screenToPercent(e.clientX, e.clientY, rect)
+    if (!contentRef.current) return
+    const { x, y } = screenToContentPercent(e.clientX, e.clientY, contentRef.current)
     setPreviewCoord({ x, y })
   }
   const handleDragLeave = () => setPreviewCoord(null)
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
-    const rect = surfaceRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const { x, y } = screenToPercent(e.clientX, e.clientY, rect)
     setPreviewCoord(null)
+    if (!contentRef.current) return
+    const { x, y } = screenToContentPercent(e.clientX, e.clientY, contentRef.current)
     const photoId = e.dataTransfer.getData(DRAG_MIME)
     if (photoId) {
       onDropFromLeftPane(photoId, x, y)
@@ -78,6 +94,8 @@ export function MapCanvas({
     startY: number
     startedAt: number
     committed: boolean
+    lastX: number
+    lastY: number
   } | null>(null)
 
   const handlePinMouseDown = useCallback(
@@ -89,6 +107,8 @@ export function MapCanvas({
         startY: e.clientY,
         startedAt: Date.now(),
         committed: false,
+        lastX: 0,
+        lastY: 0,
       }
 
       const onMove = (ev: MouseEvent) => {
@@ -105,10 +125,10 @@ export function MapCanvas({
           state.committed = true
           onStartDragPin(state.id)
         }
-        if (state.committed) {
-          const rect = surfaceRef.current?.getBoundingClientRect()
-          if (!rect) return
-          const { x, y } = screenToPercent(ev.clientX, ev.clientY, rect)
+        if (state.committed && contentRef.current) {
+          const { x, y } = screenToContentPercent(ev.clientX, ev.clientY, contentRef.current)
+          state.lastX = x
+          state.lastY = y
           onMovePin(state.id, x, y)
         }
       }
@@ -117,7 +137,9 @@ export function MapCanvas({
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
         pinDragState.current = null
-        if (state?.committed) onEndDragPin(state.id)
+        if (state?.committed) {
+          onEndDragPin(state.id, state.lastX, state.lastY)
+        }
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
@@ -125,14 +147,8 @@ export function MapCanvas({
     [onStartDragPin, onMovePin, onEndDragPin],
   )
 
-  // Keep preview hidden if no active drag
-  useEffect(() => {
-    if (!draggingId) return
-  }, [draggingId])
-
   return (
     <div
-      ref={surfaceRef}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -151,6 +167,7 @@ export function MapCanvas({
           contentStyle={{ width: '100%', height: '100%' }}
         >
           <div
+            ref={contentRef}
             className="relative mx-auto my-auto"
             style={{
               width: '100%',

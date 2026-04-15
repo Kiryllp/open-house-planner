@@ -175,17 +175,15 @@ export function MainScreen({ userName, onChangeName }: Props) {
     [updatePhoto],
   )
   const handlePinDragEnd = useCallback(
-    async (id: string) => {
-      const photo = photos.find((p) => p.id === id)
+    async (id: string, xPct: number, yPct: number) => {
       setDraggingId(null)
-      if (!photo || photo.pin_x == null || photo.pin_y == null) return
       try {
-        await placePhotoOnMap(id, photo.pin_x, photo.pin_y)
+        await placePhotoOnMap(id, xPct, yPct)
       } catch (err) {
         toast.error((err as Error).message || 'Save failed')
       }
     },
-    [photos],
+    [],
   )
 
   // --- Visible carousel X: remove from map --------------------------
