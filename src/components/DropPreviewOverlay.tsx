@@ -6,8 +6,8 @@ interface Props {
 }
 
 /**
- * Pegman-style person icon shown on the map while dragging a photo
- * from the left pane, similar to Google Maps' street view drag effect.
+ * Drop-preview indicator shown on the map while dragging a photo from the
+ * left pane. Renders a clean pin marker with a pulsing shadow ring.
  */
 export function DropPreviewOverlay({ xPct, yPct }: Props) {
   if (xPct == null || yPct == null) return null
@@ -17,29 +17,38 @@ export function DropPreviewOverlay({ xPct, yPct }: Props) {
       style={{
         left: `${xPct}%`,
         top: `${yPct}%`,
-        transform: 'translate(-50%, -100%)',
+        transform: 'translate(-50%, -50%)',
         zIndex: 30,
-        filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.3))',
       }}
     >
-      <div style={{ animation: 'pegman-bounce 0.6s ease-in-out infinite alternate' }}>
-        <svg width="28" height="40" viewBox="0 0 28 40" fill="none">
-          <circle cx="14" cy="8" r="6" fill="#4285F4" />
-          <path
-            d="M7 16 C7 12, 21 12, 21 16 L21 28 C21 29, 20 30, 19 30 L9 30 C8 30, 7 29, 7 28 Z"
-            fill="#4285F4"
+      <div style={{ animation: 'drop-pulse 1.2s ease-in-out infinite' }}>
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(59,130,246,0.35) 0%, rgba(59,130,246,0.08) 60%, transparent 70%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              backgroundColor: '#3b82f6',
+              border: '2px solid white',
+              boxShadow: '0 1px 6px rgba(0,0,0,0.25)',
+            }}
           />
-          <path d="M7 17 L3 24" stroke="#4285F4" strokeWidth="3" strokeLinecap="round" />
-          <path d="M21 17 L25 24" stroke="#4285F4" strokeWidth="3" strokeLinecap="round" />
-          <path d="M11 30 L9 38" stroke="#4285F4" strokeWidth="3" strokeLinecap="round" />
-          <path d="M17 30 L19 38" stroke="#4285F4" strokeWidth="3" strokeLinecap="round" />
-          <circle cx="14" cy="8" r="2.5" fill="white" />
-        </svg>
+        </div>
       </div>
       <style>{`
-        @keyframes pegman-bounce {
-          from { transform: translateY(0); }
-          to { transform: translateY(-6px); }
+        @keyframes drop-pulse {
+          0%, 100% { transform: scale(1); opacity: 0.9; }
+          50% { transform: scale(1.3); opacity: 1; }
         }
       `}</style>
     </div>

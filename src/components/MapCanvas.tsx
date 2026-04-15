@@ -181,13 +181,6 @@ export function MapCanvas({
     [],
   )
 
-  const handlePinClick = useCallback(
-    (photoId: string) => () => {
-      callbacksRef.current.onSelect(photoId)
-    },
-    [],
-  )
-
   return (
     <div
       onDragOver={handleDragOver}
@@ -226,7 +219,6 @@ export function MapCanvas({
                 photo={photo}
                 selected={photo.id === selectedId}
                 onInteraction={handleInteraction(photo.id, photo)}
-                onClick={handlePinClick(photo.id)}
               />
             ))}
             <DropPreviewOverlay xPct={previewCoord?.x ?? null} yPct={previewCoord?.y ?? null} />

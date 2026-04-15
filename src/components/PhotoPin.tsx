@@ -1,54 +1,65 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { memo, useRef, useEffect } from 'react'
+import { memo, useCallback, useRef } from 'react'
 import type { Photo } from '@/lib/types'
 
 interface PhotoPinProps {
   photo: Photo
   selected: boolean
   onInteraction: (e: PointerEvent, action: 'move' | 'rotate') => void
-  onClick: () => void
 }
 
 /**
- * Attaches a native pointerdown listener in the capture phase so it fires
- * before react-zoom-pan-pinch can intercept the event for panning.
+ * Returns a callback ref that attaches capture-phase pointerdown + mousedown
+ * listeners whenever the element mounts, and removes them on unmount. Using a
+ * callback ref (instead of useRef + useEffect) ensures listeners are correctly
+ * attached to conditionally-rendered elements like the rotation handle.
+ *
+ * The mousedown listener is needed because Chrome doesn't reliably suppress
+ * mousedown when pointerdown is cancelled via preventDefault, and
+ * react-zoom-pan-pinch listens for mousedown on the window.
  */
-function useNativePointerDown(
-  ref: React.RefObject<HTMLElement | null>,
-  handler: (e: PointerEvent) => void,
-) {
+function usePinPointerHandler(handler: (e: PointerEvent) => void) {
   const handlerRef = useRef(handler)
   handlerRef.current = handler
+  const cleanupRef = useRef<(() => void) | null>(null)
 
-  useEffect(() => {
-    const el = ref.current
+  return useCallback((el: HTMLDivElement | null) => {
+    cleanupRef.current?.()
+    cleanupRef.current = null
     if (!el) return
-    const listener = (e: PointerEvent) => handlerRef.current(e)
-    el.addEventListener('pointerdown', listener, { capture: true })
-    return () => el.removeEventListener('pointerdown', listener, { capture: true })
-  }, [ref])
+
+    const onPointer = (e: PointerEvent) => handlerRef.current(e)
+    const onMouse = (e: MouseEvent) => {
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+    }
+    el.addEventListener('pointerdown', onPointer, { capture: true })
+    el.addEventListener('mousedown', onMouse, { capture: true })
+    cleanupRef.current = () => {
+      el.removeEventListener('pointerdown', onPointer, { capture: true })
+      el.removeEventListener('mousedown', onMouse, { capture: true })
+    }
+  }, [])
 }
 
-export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction, onClick }: PhotoPinProps) {
-  if (photo.pin_x == null || photo.pin_y == null) return null
-
-  const pinRef = useRef<HTMLDivElement>(null)
-  const rotateRef = useRef<HTMLDivElement>(null)
-
-  useNativePointerDown(pinRef, (e) => {
+export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction }: PhotoPinProps) {
+  const pinRef = usePinPointerHandler((e) => {
     e.stopPropagation()
     e.stopImmediatePropagation()
+    e.preventDefault()
     onInteraction(e, 'move')
   })
 
-  useNativePointerDown(rotateRef, (e) => {
+  const rotateRef = usePinPointerHandler((e) => {
     e.stopPropagation()
     e.stopImmediatePropagation()
     e.preventDefault()
     onInteraction(e, 'rotate')
   })
+
+  if (photo.pin_x == null || photo.pin_y == null) return null
 
   const color = photo.color || (photo.type === 'real' ? '#3b82f6' : '#a855f7')
   const dirRad = (photo.direction_deg - 90) * (Math.PI / 180)
@@ -68,7 +79,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction,
 
   return (
     <div
-      className="absolute"
+      className="pin-element absolute"
       style={{
         left: `${photo.pin_x}%`,
         top: `${photo.pin_y}%`,
@@ -118,6 +129,7 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, onInteraction,
       {selected && (
         <div
           ref={rotateRef}
+          className="pin-handle"
           style={{
             position: 'absolute',
             left: '50%',

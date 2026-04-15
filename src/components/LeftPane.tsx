@@ -26,7 +26,7 @@ export function LeftPane({
   onDropOnZone,
 }: Props) {
   const [query, setQuery] = useState('')
-  const [primaryOnly, setPrimaryOnly] = useState(false)
+  const [primaryOnly, setPrimaryOnly] = useState(true)
   const [highlightedSourceUploadId, setHighlightedSourceUploadId] =
     useState<string | null>(null)
   const [paneDragging, setPaneDragging] = useState(false)
