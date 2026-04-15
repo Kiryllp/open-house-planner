@@ -24,6 +24,12 @@ export interface Photo {
 
   // Concept → Real linking (one real can be linked by many concepts).
   // Only meaningful when type === 'concept'.
+  //
+  // INVARIANT: All concept rows that share a `source_upload_id` MUST have the
+  // same `linked_real_id`. A multi-zone upload produces one row per zone, and
+  // the link state is cascaded across the whole group. Write only via
+  // `updateConceptGroupLinkTracked` in `supabaseActions.ts` — writing this
+  // column directly will leave sibling zones inconsistent.
   linked_real_id: string | null
 
   // Marked as a ground-truth reference image for the AI zone classifier.

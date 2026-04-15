@@ -267,6 +267,12 @@ export interface UpdatePhotoTrackedArgs {
  * Diff-aware update helper. Performs the DB write, then logs one event
  * per changed field. Log failures are swallowed with a console.warn —
  * they never surface as user-visible errors.
+ *
+ * NOTE for `linked_real_id` writes: do NOT call this directly to change a
+ * concept's link. Use `updateConceptGroupLinkTracked` below — it cascades
+ * the write across every sibling row in the same `source_upload_id` group
+ * so multi-zone concepts stay consistent. Writing via this function will
+ * silently leave sibling zones unlinked.
  */
 export async function updatePhotoTracked(
   args: UpdatePhotoTrackedArgs,
@@ -280,6 +286,74 @@ export async function updatePhotoTracked(
     autoAssignedColor: args.autoAssignedColor,
   })
   await logEventsSafe(events)
+}
+
+export interface UpdateConceptGroupLinkArgs {
+  /** The concept row the user clicked. Its `source_upload_id` identifies the group. */
+  concept: Photo
+  /**
+   * Any pool of photos that contains the sibling concept rows. Usually this is
+   * `conceptPhotos` from MainScreen, but `allPhotos` works too — the helper
+   * filters to `type === 'concept'` internally.
+   */
+  siblingPool: Photo[]
+  /**
+   * Pool of photos used to look up real-photo display names for history events.
+   * `realPhotos` or `allPhotos` both work.
+   */
+  realPhotos: Photo[]
+  /** New link target. Null means "unlink". */
+  newRealId: string | null
+  actorName: string | null
+}
+
+/**
+ * Cascade a link/unlink across every concept row that shares `source_upload_id`
+ * with `concept`. This is the ONLY sanctioned path for writing `linked_real_id`
+ * on concept rows — a direct `updatePhotoTracked({ updates: { linked_real_id } })`
+ * leaves sibling zones in an inconsistent state (a multi-zone concept would
+ * appear linked in one zone and unlinked in another).
+ *
+ * Emits one `linked_to_real` / `unlinked_from_real` history event per sibling
+ * via the existing `updatePhotoTracked` path. Rows already at the target
+ * `linked_real_id` are skipped so the audit log stays clean. Rows with a null
+ * `source_upload_id` (legacy uploads) are treated as a group of one.
+ */
+export async function updateConceptGroupLinkTracked(
+  args: UpdateConceptGroupLinkArgs,
+): Promise<void> {
+  const { concept, siblingPool, realPhotos, newRealId, actorName } = args
+
+  const siblings = concept.source_upload_id
+    ? siblingPool.filter(
+        (p) =>
+          p.type === 'concept' &&
+          p.source_upload_id === concept.source_upload_id &&
+          !p.deleted_at,
+      )
+    : [concept]
+
+  const newLinkedRealName =
+    newRealId != null
+      ? realPhotos.find((r) => r.id === newRealId)?.name ?? null
+      : null
+
+  await Promise.all(
+    siblings.map((sibling) => {
+      if (sibling.linked_real_id === newRealId) return Promise.resolve()
+      const priorLinkedRealName =
+        sibling.linked_real_id != null
+          ? realPhotos.find((r) => r.id === sibling.linked_real_id)?.name ?? null
+          : null
+      return updatePhotoTracked({
+        before: sibling,
+        updates: { linked_real_id: newRealId },
+        actorName,
+        linkedRealName: newLinkedRealName,
+        priorLinkedRealName,
+      })
+    }),
+  )
 }
 
 /**

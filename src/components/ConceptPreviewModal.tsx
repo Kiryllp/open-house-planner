@@ -11,6 +11,7 @@ import { PhotoHistoryPanel } from './PhotoHistoryPanel'
 import {
   insertPhotoTracked,
   softDeletePhotoTracked,
+  updateConceptGroupLinkTracked,
   updatePhotoTracked,
   uploadPhoto,
   type PhotoInsert,
@@ -48,13 +49,12 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      const newLinked = realPhotos.find((r) => r.id === realId) ?? null
-      await updatePhotoTracked({
-        before: concept,
-        updates: { linked_real_id: realId },
+      await updateConceptGroupLinkTracked({
+        concept,
+        siblingPool: allPhotos,
+        realPhotos,
+        newRealId: realId,
         actorName: userName,
-        linkedRealName: newLinked?.name ?? null,
-        priorLinkedRealName: linkedReal?.name ?? null,
       })
       setShowPicker(false)
       toast.success('Linked')
@@ -69,11 +69,12 @@ export function ConceptPreviewModal({
     if (busy) return
     setBusy(true)
     try {
-      await updatePhotoTracked({
-        before: concept,
-        updates: { linked_real_id: null },
+      await updateConceptGroupLinkTracked({
+        concept,
+        siblingPool: allPhotos,
+        realPhotos,
+        newRealId: null,
         actorName: userName,
-        priorLinkedRealName: linkedReal?.name ?? null,
       })
       setShowPicker(true)
       toast.success('Unlinked')
@@ -117,12 +118,15 @@ export function ConceptPreviewModal({
       }
       const inserted = await insertPhotoTracked(row, userName)
       if (inserted) {
-        await updatePhotoTracked({
-          before: concept,
-          updates: { linked_real_id: inserted.id },
+        // Include the freshly-inserted real in the name-lookup pool so the
+        // history event records its display name (it isn't in `realPhotos`
+        // yet because the parent hasn't re-rendered).
+        await updateConceptGroupLinkTracked({
+          concept,
+          siblingPool: allPhotos,
+          realPhotos: [...realPhotos, inserted],
+          newRealId: inserted.id,
           actorName: userName,
-          linkedRealName: inserted.name ?? null,
-          priorLinkedRealName: linkedReal?.name ?? null,
         })
         setShowPicker(false)
         toast.success('Uploaded and linked')

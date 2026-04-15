@@ -5,7 +5,10 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
-import { updatePhotoTracked } from '@/lib/supabaseActions'
+import {
+  updateConceptGroupLinkTracked,
+  updatePhotoTracked,
+} from '@/lib/supabaseActions'
 import { usePhotoSearch } from '@/lib/usePhotoSearch'
 import type { FieldMatches } from '@/lib/searchPhotos'
 import { LinkingView } from './LinkingView'
@@ -197,25 +200,34 @@ function RealPhotoRow({
     if (busy || selectedForLink.size === 0) return
     setBusy(true)
     try {
-      const ids = Array.from(selectedForLink)
+      const selectedConcepts = Array.from(selectedForLink)
+        .map((id) => conceptPhotos.find((c) => c.id === id))
+        .filter((c): c is Photo => !!c)
+
+      // Dedupe by source_upload_id so multi-selecting two siblings of the
+      // same multi-zone upload only triggers one cascade.
+      const seenGroups = new Set<string>()
+      const groupReps = selectedConcepts.filter((c) => {
+        const key = c.source_upload_id ?? `id:${c.id}`
+        if (seenGroups.has(key)) return false
+        seenGroups.add(key)
+        return true
+      })
+
       await Promise.all(
-        ids.map((id) => {
-          const concept = conceptPhotos.find((c) => c.id === id)
-          if (!concept) return Promise.resolve()
-          const priorReal =
-            concept.linked_real_id != null
-              ? allPhotos.find((p) => p.id === concept.linked_real_id) ?? null
-              : null
-          return updatePhotoTracked({
-            before: concept,
-            updates: { linked_real_id: real.id },
+        groupReps.map((concept) =>
+          updateConceptGroupLinkTracked({
+            concept,
+            siblingPool: conceptPhotos,
+            realPhotos: allPhotos,
+            newRealId: real.id,
             actorName: userName,
-            linkedRealName: real.name ?? null,
-            priorLinkedRealName: priorReal?.name ?? null,
-          })
-        }),
+          }),
+        ),
       )
-      toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
+      toast.success(
+        `Linked ${selectedConcepts.length} concept${selectedConcepts.length > 1 ? 's' : ''}`,
+      )
       setSelectedForLink(new Set())
     } catch (err) {
       toast.error((err as Error).message || 'Link failed')
@@ -230,11 +242,12 @@ function RealPhotoRow({
     try {
       const concept = conceptPhotos.find((c) => c.id === conceptId)
       if (!concept) return
-      await updatePhotoTracked({
-        before: concept,
-        updates: { linked_real_id: null },
+      await updateConceptGroupLinkTracked({
+        concept,
+        siblingPool: conceptPhotos,
+        realPhotos: allPhotos,
+        newRealId: null,
         actorName: userName,
-        priorLinkedRealName: real.name ?? null,
       })
       toast.success('Unlinked')
     } catch (err) {

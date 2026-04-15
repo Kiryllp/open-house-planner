@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
-import { updatePhotoTracked } from '@/lib/supabaseActions'
+import { updateConceptGroupLinkTracked } from '@/lib/supabaseActions'
 import { usePhotoSearch } from '@/lib/usePhotoSearch'
 import type { FieldMatches } from '@/lib/searchPhotos'
 import { HighlightedText } from './HighlightedText'
@@ -98,26 +98,34 @@ export function LinkingView({ conceptPhotos, realPhotos, userName }: Props) {
     if (busy || selected.size === 0) return
     setBusy(true)
     try {
-      const ids = Array.from(selected)
-      const target = realPhotos.find((r) => r.id === realId) ?? null
+      const selectedConcepts = Array.from(selected)
+        .map((id) => conceptPhotos.find((c) => c.id === id))
+        .filter((c): c is Photo => !!c)
+
+      // Dedupe by source_upload_id: multi-selecting two siblings should only
+      // trigger one cascade per upload group.
+      const seenGroups = new Set<string>()
+      const groupReps = selectedConcepts.filter((c) => {
+        const key = c.source_upload_id ?? `id:${c.id}`
+        if (seenGroups.has(key)) return false
+        seenGroups.add(key)
+        return true
+      })
+
       await Promise.all(
-        ids.map((id) => {
-          const concept = conceptPhotos.find((c) => c.id === id)
-          if (!concept) return Promise.resolve()
-          const priorReal =
-            concept.linked_real_id != null
-              ? realPhotos.find((r) => r.id === concept.linked_real_id) ?? null
-              : null
-          return updatePhotoTracked({
-            before: concept,
-            updates: { linked_real_id: realId },
+        groupReps.map((concept) =>
+          updateConceptGroupLinkTracked({
+            concept,
+            siblingPool: conceptPhotos,
+            realPhotos,
+            newRealId: realId,
             actorName: userName,
-            linkedRealName: target?.name ?? null,
-            priorLinkedRealName: priorReal?.name ?? null,
-          })
-        }),
+          }),
+        ),
       )
-      toast.success(`Linked ${ids.length} concept${ids.length > 1 ? 's' : ''}`)
+      toast.success(
+        `Linked ${selectedConcepts.length} concept${selectedConcepts.length > 1 ? 's' : ''}`,
+      )
       setSelected(new Set())
     } catch (err) {
       toast.error((err as Error).message || 'Link failed')
