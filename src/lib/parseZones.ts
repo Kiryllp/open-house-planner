@@ -15,7 +15,10 @@ import type { ZoneId } from './types'
  * Digits 0, 7, 8, 9 are ignored (we only have six zones).
  */
 export function parseZonesFromFilename(name: string): ZoneId[] {
-  const matches = name.match(/[1-6]/g) ?? []
+  const cleaned = name
+    .replace(/_v\d+(?=\.[^.]+$)/i, '') // strip version suffix (_v1, _v10) before extension
+    .replace(/\d+(st|nd|rd|th)/gi, '') // strip ordinals (1st, 2nd, 3rd, 4th)
+  const matches = cleaned.match(/[1-6]/g) ?? []
   const seen = new Set<number>()
   const ordered: ZoneId[] = []
   for (const ch of matches) {

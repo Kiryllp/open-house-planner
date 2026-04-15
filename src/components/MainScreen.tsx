@@ -20,6 +20,7 @@ import { VisiblePhotosBar } from './VisiblePhotosBar'
 import { UploadDialog } from './UploadDialog'
 import { ConceptPreviewModal } from './ConceptPreviewModal'
 import { SimpleGallery } from './SimpleGallery'
+import { RealPhotosView } from './RealPhotosView'
 import { buildOriginalsZip, downloadBlob } from '@/lib/exportOriginalsZip'
 
 interface Props {
@@ -93,6 +94,10 @@ export function MainScreen({ userName, onChangeName }: Props) {
   )
   const realPhotos = useMemo(
     () => activePhotos.filter((p) => p.type === 'real'),
+    [activePhotos],
+  )
+  const conceptPhotos = useMemo(
+    () => activePhotos.filter((p) => p.type === 'concept'),
     [activePhotos],
   )
   const previewPhoto = useMemo(
@@ -339,23 +344,11 @@ export function MainScreen({ userName, onChangeName }: Props) {
         )}
 
         {mainTab === 'real' && (
-          <SimpleGallery
-            title="Real Photos"
-            emptyText="No real photos yet. Use Upload Photos and select Real."
-            photos={realPhotos}
+          <RealPhotosView
+            realPhotos={realPhotos}
+            conceptPhotos={conceptPhotos}
             onPhotoClick={(photo) => setPreviewPhotoId(photo.id)}
-            renderActions={(photo) => (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleSoftDelete(photo)
-                }}
-                className="rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-red-600 shadow hover:bg-red-500 hover:text-white"
-              >
-                Delete
-              </button>
-            )}
+            onDelete={handleSoftDelete}
           />
         )}
 
