@@ -1,12 +1,32 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
+import {
+  TransformComponent,
+  TransformWrapper,
+  type ReactZoomPanPinchRef,
+} from 'react-zoom-pan-pinch'
 import type { Photo } from '@/lib/types'
 import { DRAG_DISTANCE_THRESHOLD, DRAG_HOLD_THRESHOLD_MS } from '@/lib/coords'
 import { PhotoPin } from './PhotoPin'
 import { DropPreviewOverlay } from './DropPreviewOverlay'
+
+/**
+ * Imperative handle exposed via `ref` so other parts of the UI can ask the
+ * map to scroll a specific pin into view and briefly pulse it.
+ */
+export interface MapCanvasHandle {
+  /** Pan the map so the pin with the given id is centered, then pulse it. */
+  scrollPinIntoView(id: string): void
+}
 
 interface Props {
   floorplanUrl: string | null
@@ -42,22 +62,100 @@ function screenToContentPercent(
 
 type PreviewPhase = 'idle' | 'dragging' | 'dropping'
 
-export function MapCanvas({
-  floorplanUrl,
-  visiblePhotos,
-  selectedId,
-  draggingId,
-  draggingPhoto,
-  onSelect,
-  onStartDragPin,
-  onMovePin,
-  onEndDragPin,
-  onRotatePin,
-  onEndRotatePin,
-  onDropFromLeftPane,
-  onDropFiles,
-}: Props) {
+export const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
+  {
+    floorplanUrl,
+    visiblePhotos,
+    selectedId,
+    draggingId,
+    draggingPhoto,
+    onSelect,
+    onStartDragPin,
+    onMovePin,
+    onEndDragPin,
+    onRotatePin,
+    onEndRotatePin,
+    onDropFromLeftPane,
+    onDropFiles,
+  },
+  ref,
+) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const transformRef = useRef<ReactZoomPanPinchRef | null>(null)
+
+  // Expose an imperative API for panning the map to a specific pin and
+  // briefly pulsing it. Used by LeftPane's "Search all concepts" results.
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollPinIntoView(id: string) {
+        try {
+          const wrapper = transformRef.current
+          const content = contentRef.current
+          if (!wrapper || !content) return
+
+          const selector = `[data-pin-id="${CSS.escape(id)}"]`
+          // Query the live document (not contentRef.current) so we always
+          // hit the currently-mounted pin even if refs were briefly stale
+          // after a Fast Refresh. data-pin-id is unique per pin.
+          const pinEl = document.querySelector<HTMLElement>(selector)
+          if (!pinEl) return
+
+          // Read current transform state. Different versions of the library
+          // store it under `.state` or `.instance.transformState`.
+          const state =
+            (wrapper as unknown as {
+              state?: { scale: number; positionX: number; positionY: number }
+            }).state ??
+            (wrapper as unknown as {
+              instance?: {
+                transformState?: {
+                  scale: number
+                  positionX: number
+                  positionY: number
+                }
+              }
+            }).instance?.transformState
+          const scale = state?.scale ?? 1
+          const posX = state?.positionX ?? 0
+          const posY = state?.positionY ?? 0
+
+          // Pan so the pin lands at the center of the zoom-wrapper viewport.
+          // Compute the delta in screen pixels from the pin's current
+          // on-screen position, then add it to the wrapper's current pan.
+          const wrapperEl = content.parentElement?.parentElement as
+            | HTMLElement
+            | null
+          const viewportEl = wrapperEl ?? content.parentElement
+          if (!viewportEl) return
+          const wrapperRect = viewportEl.getBoundingClientRect()
+          const pinRect = pinEl.getBoundingClientRect()
+          const pinCenterX = pinRect.left + pinRect.width / 2
+          const pinCenterY = pinRect.top + pinRect.height / 2
+          const viewportCenterX = wrapperRect.left + wrapperRect.width / 2
+          const viewportCenterY = wrapperRect.top + wrapperRect.height / 2
+
+          const newX = posX + (viewportCenterX - pinCenterX)
+          const newY = posY + (viewportCenterY - pinCenterY)
+
+          wrapper.setTransform(newX, newY, scale, 300, 'easeOut')
+
+          // Add a temporary pulse class. PhotoPin's wrapper div carries
+          // the `pin-element` class; we add `pin-pulse` alongside briefly.
+          pinEl.classList.remove('pin-pulse')
+          // Force reflow so the animation can retrigger on repeated clicks.
+          void pinEl.offsetWidth
+          pinEl.classList.add('pin-pulse')
+          window.setTimeout(() => {
+            pinEl.classList.remove('pin-pulse')
+          }, 1100)
+        } catch (err) {
+          console.error('[scrollPinIntoView] error', err)
+        }
+      },
+    }),
+    [],
+  )
 
   // --- rAF-based preview positioning (no React state on every pointer move) ---
   const previewElRef = useRef<HTMLDivElement>(null)
@@ -301,6 +399,7 @@ export function MapCanvas({
       className="relative h-full w-full overflow-hidden bg-gray-100"
     >
       <TransformWrapper
+        ref={transformRef}
         minScale={0.5}
         maxScale={6}
         initialScale={1}
@@ -352,6 +451,6 @@ export function MapCanvas({
       )}
     </div>
   )
-}
+})
 
 export { DRAG_MIME }

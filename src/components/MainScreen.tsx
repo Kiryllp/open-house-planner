@@ -14,7 +14,7 @@ import {
 } from '@/lib/supabaseActions'
 import { TopBar } from './TopBar'
 import { LeftPane } from './LeftPane'
-import { MapCanvas } from './MapCanvas'
+import { MapCanvas, type MapCanvasHandle } from './MapCanvas'
 import { VisiblePhotosBar } from './VisiblePhotosBar'
 import { UploadDialog } from './UploadDialog'
 import { ConceptPreviewModal } from './ConceptPreviewModal'
@@ -53,6 +53,9 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [ghostDropping, setGhostDropping] = useState(false)
   const ghostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const photosRef = useRef<Photo[]>([])
+  // Imperative handle into MapCanvas so LeftPane's Search-all results can
+  // pan to a pin that's already placed on the map and pulse it.
+  const mapRef = useRef<MapCanvasHandle | null>(null)
   const [tab, setTab] = useState<TopTab>('concept')
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
@@ -405,16 +408,22 @@ export function MainScreen({ userName, onChangeName }: Props) {
           <>
             <LeftPane
               unusedConcepts={unusedConcepts}
+              searchableConcepts={conceptPhotos}
               onDragStart={handleLeftPaneDragStart}
               onDragEnd={handleLeftPaneDragEnd}
               onCardClick={(photo) => setPreviewPhotoId(photo.id)}
               onCardDelete={handleSoftDelete}
               onFilesDropped={handleFiles}
               onDropOnZone={handleDropOnZone}
+              onFocusPin={(id) => {
+                setSelectedId(id)
+                mapRef.current?.scrollPinIntoView(id)
+              }}
             />
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="min-h-0 flex-1">
                 <MapCanvas
+                  ref={mapRef}
                   floorplanUrl={FLOORPLAN_URL}
                   visiblePhotos={visibleConcepts}
                   selectedId={selectedId}

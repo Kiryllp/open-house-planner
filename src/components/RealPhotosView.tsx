@@ -6,8 +6,11 @@ import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
 import { updatePhotoTracked } from '@/lib/supabaseActions'
+import { usePhotoSearch } from '@/lib/usePhotoSearch'
+import type { FieldMatches } from '@/lib/searchPhotos'
 import { LinkingView } from './LinkingView'
 import { PhotoHistoryPanel } from './PhotoHistoryPanel'
+import { HighlightedText } from './HighlightedText'
 
 type RealSubTab = 'gallery' | 'link'
 
@@ -126,30 +129,42 @@ function RealPhotoRow({
     [conceptPhotos],
   )
 
+  // Fuzzy search across unlinked concepts; the zone chip is threaded in as
+  // a pre-filter so "zone 3" typed in the box and a chip click reach the
+  // same place inside the hook.
+  const { results: pickerResults } = usePhotoSearch(unlinkedConcepts, {
+    query: pickerSearch,
+    zone: pickerZoneFilter,
+    type: 'concept',
+  })
+
   const filteredUnlinked = useMemo(() => {
-    let list = unlinkedConcepts
-    if (pickerZoneFilter) {
-      list = list.filter((c) => c.zone === pickerZoneFilter)
-    }
-    if (pickerSearch.trim()) {
-      const q = pickerSearch.toLowerCase()
-      list = list.filter((c) => c.name?.toLowerCase().includes(q))
-    }
     const realStem = (real.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
-    return [...list].sort((a, b) => {
-      const aName = (a.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
-      const bName = (b.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
+    // Preserve the existing stem/zone tiebreaker behavior. Fuse has already
+    // sorted by relevance; stem and zone matches still take precedence so a
+    // photo that shares the real's filename stem floats to the top.
+    return [...pickerResults].sort((a, b) => {
+      const aName = (a.photo.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
+      const bName = (b.photo.name ?? '').replace(/_v\d+$/i, '').toLowerCase()
       const aStemMatch = realStem && aName.includes(realStem) ? 0 : 1
       const bStemMatch = realStem && bName.includes(realStem) ? 0 : 1
       if (aStemMatch !== bStemMatch) return aStemMatch - bStemMatch
       if (real.zone) {
-        const aZone = a.zone === real.zone ? 0 : 1
-        const bZone = b.zone === real.zone ? 0 : 1
+        const aZone = a.photo.zone === real.zone ? 0 : 1
+        const bZone = b.photo.zone === real.zone ? 0 : 1
         if (aZone !== bZone) return aZone - bZone
       }
-      return (a.name ?? '').localeCompare(b.name ?? '')
+      if (a.score !== b.score) return a.score - b.score
+      return (a.photo.name ?? '').localeCompare(b.photo.name ?? '')
     })
-  }, [unlinkedConcepts, real.zone, real.name, pickerSearch, pickerZoneFilter])
+  }, [pickerResults, real.zone, real.name])
+
+  // Lookup of match ranges for per-card highlighting.
+  const pickerMatchesById = useMemo(() => {
+    const m = new Map<string, FieldMatches>()
+    for (const r of pickerResults) m.set(r.photo.id, r.matches)
+    return m
+  }, [pickerResults])
 
   async function handleChangeZone(zone: ZoneId) {
     if (busy) return
@@ -422,7 +437,7 @@ function RealPhotoRow({
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        setSelectedForLink(new Set(filteredUnlinked.map((c) => c.id)))
+                        setSelectedForLink(new Set(filteredUnlinked.map((r) => r.photo.id)))
                       }}
                       className="rounded bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
                     >
@@ -443,12 +458,17 @@ function RealPhotoRow({
               </div>
               {filteredUnlinked.length === 0 ? (
                 <div className="rounded border border-dashed border-gray-200 py-4 text-center text-xs text-gray-400">
-                  {unlinkedConcepts.length === 0 ? 'All concepts are already linked.' : 'No matches. Try a different search.'}
+                  {unlinkedConcepts.length === 0
+                    ? 'All concepts are already linked.'
+                    : pickerSearch
+                      ? `No matches for "${pickerSearch}". Try fewer letters or clear the zone filter.`
+                      : 'No unlinked concepts in this zone.'}
                 </div>
               ) : (
                 <div className="grid max-h-[40vh] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
-                  {filteredUnlinked.map((concept) => {
+                  {filteredUnlinked.map(({ photo: concept }) => {
                     const isSelected = selectedForLink.has(concept.id)
+                    const conceptMatches = pickerMatchesById.get(concept.id)
                     return (
                       <button
                         type="button"
@@ -474,7 +494,11 @@ function RealPhotoRow({
                         )}
                         {concept.name && (
                           <span className="absolute bottom-0.5 right-0.5 max-w-[80%] truncate rounded bg-black/60 px-1 py-0.5 text-[8px] text-white">
-                            {concept.name}
+                            <HighlightedText
+                              text={concept.name}
+                              matches={conceptMatches?.name}
+                              markClassName="rounded bg-yellow-200 px-0.5 text-black"
+                            />
                           </span>
                         )}
                         {isSelected && (

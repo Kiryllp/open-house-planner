@@ -1,6 +1,7 @@
 'use client'
 
 import type { Photo, ZoneId } from '@/lib/types'
+import type { FieldMatches } from '@/lib/searchPhotos'
 import { UnusedPhotoCard } from './UnusedPhotoCard'
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
   highlightedSourceUploadId: string | null
   onHoverSiblings: (sourceUploadId: string | null) => void
   siblingCountByUploadId: Map<string, number>
+  /** Per-photo Fuse match ranges, keyed by photo id. Passed to each card. */
+  matchesById?: Map<string, FieldMatches>
   onDragStart: (e: React.DragEvent, photo: Photo) => void
   onDragEnd: (e: React.DragEvent) => void
   onCardClick: (photo: Photo) => void
@@ -22,6 +25,7 @@ export function ZoneSection({
   highlightedSourceUploadId,
   onHoverSiblings,
   siblingCountByUploadId,
+  matchesById,
   onDragStart,
   onDragEnd,
   onCardClick,
@@ -56,6 +60,8 @@ export function ZoneSection({
                 highlightedSourceUploadId !== null &&
                 p.source_upload_id === highlightedSourceUploadId
               }
+              matches={matchesById?.get(p.id)}
+              placed={p.pin_x != null}
               onHoverSiblings={onHoverSiblings}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}

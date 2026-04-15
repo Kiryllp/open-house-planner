@@ -4,11 +4,17 @@
 import { memo } from 'react'
 import type { Photo } from '@/lib/types'
 import { zoneRankLabel } from '@/lib/types'
+import type { FieldMatches } from '@/lib/searchPhotos'
+import { HighlightedText } from './HighlightedText'
 
 interface Props {
   photo: Photo
   isDuplicate: boolean
   isSiblingHighlighted: boolean
+  /** Fuse match indices per-field, used to render highlighted spans in the name label. */
+  matches?: FieldMatches
+  /** When true, the card represents a photo already placed on the map (Search-all mode). */
+  placed?: boolean
   onDragStart: (e: React.DragEvent, photo: Photo) => void
   onDragEnd: (e: React.DragEvent) => void
   onClick: (photo: Photo) => void
@@ -20,6 +26,8 @@ export const UnusedPhotoCard = memo(function UnusedPhotoCard({
   photo,
   isDuplicate,
   isSiblingHighlighted,
+  matches,
+  placed = false,
   onDragStart,
   onDragEnd,
   onClick,
@@ -79,6 +87,22 @@ export const UnusedPhotoCard = memo(function UnusedPhotoCard({
           linked
         </span>
       )}
+
+      {/* Placed-on-map indicator (shown in Search-all mode) */}
+      {placed && (
+        <span className="absolute left-1 bottom-1 rounded bg-emerald-600/90 px-1 py-px text-[9px] font-medium text-white">
+          on map
+        </span>
+      )}
+
+      {/* Name label — carries HighlightedText so match spans render. */}
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 via-black/40 to-transparent px-1.5 pb-1 pt-4 text-[10px] font-medium leading-tight text-white">
+        <HighlightedText
+          text={photo.name}
+          matches={matches?.name}
+          fallback="Untitled"
+        />
+      </span>
 
       {/* Delete button */}
       <button

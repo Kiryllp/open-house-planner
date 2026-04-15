@@ -13,3 +13,17 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* Pulse used when a search result points at a pin already on the map. */
+@keyframes pin-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgba(59, 130, 246, 0);
+  }
+}
+.pin-pulse {
+  animation: pin-pulse 0.55s ease-out 2;
+  border-radius: 8px;
+}

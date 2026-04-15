@@ -6,6 +6,9 @@ import { toast } from 'sonner'
 import type { Photo, ZoneId } from '@/lib/types'
 import { ZONE_IDS } from '@/lib/types'
 import { updatePhotoTracked } from '@/lib/supabaseActions'
+import { usePhotoSearch } from '@/lib/usePhotoSearch'
+import type { FieldMatches } from '@/lib/searchPhotos'
+import { HighlightedText } from './HighlightedText'
 
 interface Props {
   conceptPhotos: Photo[]
@@ -21,25 +24,53 @@ export function LinkingView({ conceptPhotos, realPhotos, userName }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
 
+  const unlinkedBase = useMemo(
+    () => conceptPhotos.filter((c) => !c.linked_real_id),
+    [conceptPhotos],
+  )
+
+  const { results: leftResults } = usePhotoSearch(unlinkedBase, {
+    query: leftSearch,
+    zone: leftZone,
+    type: 'concept',
+  })
+
+  const { results: rightResults } = usePhotoSearch(realPhotos, {
+    query: rightSearch,
+    zone: rightZone,
+    type: 'real',
+  })
+
+  // Final display order: if no query, alphabetical (preserves prior behavior);
+  // if there's a query, Fuse's relevance order wins. Both still honor the
+  // zone chip pre-filter inside the hook.
   const unlinkedConcepts = useMemo(() => {
-    let list = conceptPhotos.filter((c) => !c.linked_real_id)
-    if (leftZone) list = list.filter((c) => c.zone === leftZone)
-    if (leftSearch.trim()) {
-      const q = leftSearch.toLowerCase()
-      list = list.filter((c) => c.name?.toLowerCase().includes(q))
+    const photos = leftResults.map((r) => r.photo)
+    if (!leftSearch.trim()) {
+      return [...photos].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
     }
-    return list.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-  }, [conceptPhotos, leftZone, leftSearch])
+    return photos
+  }, [leftResults, leftSearch])
 
   const filteredReal = useMemo(() => {
-    let list = realPhotos
-    if (rightZone) list = list.filter((r) => r.zone === rightZone)
-    if (rightSearch.trim()) {
-      const q = rightSearch.toLowerCase()
-      list = list.filter((r) => r.name?.toLowerCase().includes(q))
+    const photos = rightResults.map((r) => r.photo)
+    if (!rightSearch.trim()) {
+      return [...photos].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
     }
-    return list.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-  }, [realPhotos, rightZone, rightSearch])
+    return photos
+  }, [rightResults, rightSearch])
+
+  const leftMatchesById = useMemo(() => {
+    const m = new Map<string, FieldMatches>()
+    for (const r of leftResults) m.set(r.photo.id, r.matches)
+    return m
+  }, [leftResults])
+
+  const rightMatchesById = useMemo(() => {
+    const m = new Map<string, FieldMatches>()
+    for (const r of rightResults) m.set(r.photo.id, r.matches)
+    return m
+  }, [rightResults])
 
   const linkedCount = useMemo(
     () => conceptPhotos.filter((c) => c.linked_real_id).length,
@@ -185,7 +216,11 @@ export function LinkingView({ conceptPhotos, realPhotos, userName }: Props) {
                       )}
                       {c.name && (
                         <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[8px] text-white">
-                          {c.name}
+                          <HighlightedText
+                            text={c.name}
+                            matches={leftMatchesById.get(c.id)?.name}
+                            markClassName="rounded bg-yellow-200 px-0.5 text-black"
+                          />
                         </span>
                       )}
                       {isSel && (
@@ -263,7 +298,11 @@ export function LinkingView({ conceptPhotos, realPhotos, userName }: Props) {
                       )}
                       {r.name && (
                         <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-3 text-[8px] text-white">
-                          {r.name}
+                          <HighlightedText
+                            text={r.name}
+                            matches={rightMatchesById.get(r.id)?.name}
+                            markClassName="rounded bg-yellow-200 px-0.5 text-black"
+                          />
                         </span>
                       )}
                       {selected.size > 0 && (
