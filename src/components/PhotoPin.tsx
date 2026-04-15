@@ -87,14 +87,11 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
   const tipX2 = Math.cos(dirRad + halfFov) * len
   const tipY2 = Math.sin(dirRad + halfFov) * len
 
-  const handleDist = len * Math.cos(halfFov)
-  const handleX = Math.cos(dirRad) * handleDist
-  const handleY = Math.sin(dirRad) * handleDist
+  const handleX = Math.cos(dirRad) * len
+  const handleY = Math.sin(dirRad) * len
 
   const svgSize = len * 2 + 20
   const svgCenter = len + 10
-
-  const iconAngle = (photo.direction_deg + 360) % 360
 
   return (
     <div
@@ -152,15 +149,17 @@ export const PhotoPin = memo(function PhotoPin({ photo, selected, dragging, onIn
             onPointerLeave={onLeave}
           >
             <circle r={14} fill="transparent" />
-            <g
-              transform={`rotate(${iconAngle})`}
+            <circle
+              r={10}
+              fill="white"
+              opacity={selected ? 1 : 0.9}
               filter={`url(#handle-shadow-${photo.id})`}
-              opacity={selected ? 1 : 0.85}
-            >
+            />
+            <g transform="translate(-6,-6) scale(0.5)">
               <path
-                d="M-4.5 1a5.5 5.5 0 0 1 9.6-3.6l1.2 1.2M6.3-2.4v3.2h-3.2M4.5-1a5.5 5.5 0 0 1-9.6 3.6l-1.2-1.2M-6.3 2.4v-3.2h3.2"
-                stroke="white"
-                strokeWidth={1.6}
+                d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.2M22 12.5a10 10 0 0 1-18.8 4.2"
+                stroke={color}
+                strokeWidth={2.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
