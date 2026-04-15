@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type { Photo } from '@/lib/types'
 import { renderMapToPng } from '@/lib/mapRender'
 import { sortPlacedPhotosForExport } from '@/lib/exportSort'
+import { fetchOriginalNames } from '@/lib/photoHistory'
 import {
   buildExportZip,
   downloadBlob,
@@ -138,6 +139,15 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
       if (includePdf) {
         // Dynamic import keeps pdf-lib out of the main bundle.
         const { buildMapPdf } = await import('@/lib/buildMapPdf')
+
+        // Look up the pre-first-rename display name for every placed
+        // photo so the index table can render a "was: <original>" line
+        // under any row whose display name has changed. Fails open:
+        // returns an empty Map on query error.
+        const originalNames = includeIndex
+          ? await fetchOriginalNames(placed.map((p) => p.id))
+          : new Map<string, string>()
+
         setProgress({
           stage: 'building-pdf',
           done: 0,
@@ -150,6 +160,7 @@ export function ExportDialog({ photos, floorplanUrl, onClose }: Props) {
           mapPng: rendered.blob,
           includeIndex,
           includeFullsize,
+          originalNames,
           signal: ac.signal,
           onProgress: (done, total, label) => {
             setProgress({

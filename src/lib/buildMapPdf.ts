@@ -30,6 +30,13 @@ export interface BuildPdfOptions {
   mapPng: Blob
   includeIndex: boolean
   includeFullsize: boolean
+  /**
+   * Optional map from `photo.id` → pre-first-rename display name
+   * (sans extension). When a photo has an entry, the index table row
+   * shows a small "was: <original>.<ext>" line beneath the current
+   * filename. Missing entries render the default single-line filename.
+   */
+  originalNames?: Map<string, string>
   onProgress?: (done: number, total: number, label: string) => void
   signal?: AbortSignal
 }
@@ -475,20 +482,52 @@ export async function buildMapPdf(opts: BuildPdfOptions): Promise<Blob> {
           color: rgb(1, 1, 1),
         })
 
-        // Filename
+        // Filename — one line with the current name, plus a smaller
+        // "was: <original>.<ext>" line below it when the photo has been
+        // renamed since upload. The pre-rename name comes from the
+        // first `renamed` event in `photo_history` (see
+        // `fetchOriginalNames` in `photoHistory.ts`).
+        const priorName = opts.originalNames?.get(photo.id)
         const filenameText = fitText(
           sanitizeText(originalFilename(photo)),
           helv,
           10,
           INDEX_COL_NAME_W - 12,
         )
-        page.drawText(filenameText, {
-          x: nameX + 6,
-          y: badgeCy - 4,
-          size: 10,
-          font: helv,
-          color: rgb(0.12, 0.14, 0.18),
-        })
+        if (priorName) {
+          const ext = extractExt(photo.file_url)
+          const priorFilename = `${priorName.trim()}.${ext}`
+          const wasLine = fitText(
+            sanitizeText(`was: ${priorFilename}`),
+            helv,
+            7,
+            INDEX_COL_NAME_W - 12,
+          )
+          // Shift the current filename up a few points so the "was:"
+          // line fits below it without crowding the row.
+          page.drawText(filenameText, {
+            x: nameX + 6,
+            y: badgeCy + 2,
+            size: 10,
+            font: helv,
+            color: rgb(0.12, 0.14, 0.18),
+          })
+          page.drawText(wasLine, {
+            x: nameX + 6,
+            y: badgeCy - 9,
+            size: 7,
+            font: helv,
+            color: rgb(0.55, 0.57, 0.6),
+          })
+        } else {
+          page.drawText(filenameText, {
+            x: nameX + 6,
+            y: badgeCy - 4,
+            size: 10,
+            font: helv,
+            color: rgb(0.12, 0.14, 0.18),
+          })
+        }
 
         // Zone — uniform neutral color so the ZONE column reads as metadata,
         // leaving the colored `#` badge as the sole visual link to the map.

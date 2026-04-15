@@ -96,6 +96,49 @@ export async function fetchPhotoHistory(
   return (data ?? []) as PhotoHistoryEvent[]
 }
 
+/**
+ * For each supplied photo ID, return the pre-first-rename display name
+ * — i.e. what `photo.name` was before any user rename happened. Photos
+ * that were never renamed are absent from the returned map.
+ *
+ * Implementation detail: `diffUpdatesToEvents` (in supabaseActions.ts)
+ * logs a `renamed` event with `details = { old, new }` on every rename.
+ * The *oldest* such event per photo has `details.old` equal to the
+ * name the photo was inserted with, which matches the original upload
+ * filename sans extension (set by `UploadDialog.tsx` from `file.name`).
+ *
+ * Fails open: a query error logs a warning and returns an empty Map so
+ * the export can still proceed without rename information.
+ */
+export async function fetchOriginalNames(
+  photoIds: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>()
+  if (photoIds.length === 0) return result
+  const supabase = getClient()
+  const { data, error } = await supabase
+    .from('photo_history')
+    .select('photo_id, details, created_at')
+    .in('photo_id', photoIds)
+    .eq('event_type', 'renamed')
+    .order('created_at', { ascending: true })
+  if (error) {
+    console.warn('fetchOriginalNames: query failed', error)
+    return result
+  }
+  for (const row of (data ?? []) as Array<{
+    photo_id: string
+    details: Record<string, unknown> | null
+  }>) {
+    if (result.has(row.photo_id)) continue
+    const old = row.details?.old
+    if (typeof old === 'string' && old.length > 0) {
+      result.set(row.photo_id, old)
+    }
+  }
+  return result
+}
+
 interface UsePhotoHistoryResult {
   events: PhotoHistoryEvent[]
   loading: boolean
