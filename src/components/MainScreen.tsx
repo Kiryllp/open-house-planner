@@ -36,6 +36,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
   const [photos, setPhotosState] = useState<Photo[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [leftPaneDragPhoto, setLeftPaneDragPhoto] = useState<Photo | null>(null)
   const [tab, setTab] = useState<TopTab>('concept')
   const [pendingUploads, setPendingUploads] = useState<File[] | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
@@ -122,13 +123,17 @@ export function MainScreen({ userName, onChangeName }: Props) {
       const ghost = new Image()
       ghost.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
       e.dataTransfer.setDragImage(ghost, 0, 0)
+      setLeftPaneDragPhoto(photo)
     },
     [],
   )
-  const handleLeftPaneDragEnd = useCallback(() => {}, [])
+  const handleLeftPaneDragEnd = useCallback(() => {
+    setLeftPaneDragPhoto(null)
+  }, [])
 
   const handleDropOnMap = useCallback(
     async (photoId: string, xPct: number, yPct: number) => {
+      setLeftPaneDragPhoto(null)
       const usedColors = new Set(
         photos
           .filter((p) => p.pin_x != null && !p.deleted_at && p.color)
@@ -363,6 +368,7 @@ export function MainScreen({ userName, onChangeName }: Props) {
                   visiblePhotos={visibleConcepts}
                   selectedId={selectedId}
                   draggingId={draggingId}
+                  draggingPhoto={leftPaneDragPhoto}
                   onSelect={(id) => {
                     setSelectedId(id)
                     setPreviewPhotoId(id)

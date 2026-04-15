@@ -1,7 +1,7 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
 import type { Photo } from '@/lib/types'
 import { DRAG_DISTANCE_THRESHOLD, DRAG_HOLD_THRESHOLD_MS } from '@/lib/coords'
@@ -13,6 +13,7 @@ interface Props {
   visiblePhotos: Photo[]
   selectedId: string | null
   draggingId: string | null
+  draggingPhoto: Photo | null
   onSelect: (id: string | null) => void
   onStartDragPin: (id: string) => void
   onMovePin: (id: string, xPct: number, yPct: number) => void
@@ -39,11 +40,14 @@ function screenToContentPercent(
   }
 }
 
+type PreviewPhase = 'idle' | 'dragging' | 'dropping'
+
 export function MapCanvas({
   floorplanUrl,
   visiblePhotos,
   selectedId,
   draggingId,
+  draggingPhoto,
   onSelect,
   onStartDragPin,
   onMovePin,
@@ -54,8 +58,99 @@ export function MapCanvas({
   onDropFiles,
 }: Props) {
   const contentRef = useRef<HTMLDivElement>(null)
-  const [previewCoord, setPreviewCoord] = useState<{ x: number; y: number } | null>(null)
 
+  // --- rAF-based preview positioning (no React state on every pointer move) ---
+  const previewElRef = useRef<HTMLDivElement>(null)
+  const previewPosRef = useRef({ x: 0, y: 0 })
+  const rafIdRef = useRef(0)
+  const [previewPhase, setPreviewPhase] = useState<PreviewPhase>('idle')
+  const phaseRef = useRef<PreviewPhase>('idle')
+  const droppingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setPhase = useCallback((next: PreviewPhase) => {
+    phaseRef.current = next
+    setPreviewPhase(next)
+  }, [])
+
+  // --- Floorplan image bounds for invalid-zone detection ---
+  const imageNaturalRef = useRef<{ w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    if (!floorplanUrl) return
+    const img = new Image()
+    img.onload = () => {
+      imageNaturalRef.current = { w: img.naturalWidth, h: img.naturalHeight }
+    }
+    img.src = floorplanUrl
+  }, [floorplanUrl])
+
+  const isInsideFloorplan = useCallback((xPct: number, yPct: number): boolean => {
+    const dims = imageNaturalRef.current
+    const el = contentRef.current
+    if (!dims || !el) return true
+
+    const rect = el.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return true
+    const containerAspect = rect.width / rect.height
+    const imageAspect = dims.w / dims.h
+
+    let leftPct: number, topPct: number, rightPct: number, bottomPct: number
+
+    if (imageAspect > containerAspect) {
+      const renderH = rect.width / imageAspect
+      const offsetY = (rect.height - renderH) / 2
+      leftPct = 0
+      rightPct = 100
+      topPct = (offsetY / rect.height) * 100
+      bottomPct = ((offsetY + renderH) / rect.height) * 100
+    } else {
+      const renderW = rect.height * imageAspect
+      const offsetX = (rect.width - renderW) / 2
+      topPct = 0
+      bottomPct = 100
+      leftPct = (offsetX / rect.width) * 100
+      rightPct = ((offsetX + renderW) / rect.width) * 100
+    }
+
+    return xPct >= leftPct && xPct <= rightPct && yPct >= topPct && yPct <= bottomPct
+  }, [])
+
+  // Writes position + validity directly to the DOM via ref (no re-render)
+  const schedulePreviewUpdate = useCallback(() => {
+    cancelAnimationFrame(rafIdRef.current)
+    rafIdRef.current = requestAnimationFrame(() => {
+      const el = previewElRef.current
+      if (!el) return
+      const { x, y } = previewPosRef.current
+      el.style.left = `${x}%`
+      el.style.top = `${y}%`
+      el.dataset.valid = isInsideFloorplan(x, y) ? 'true' : 'false'
+    })
+  }, [isInsideFloorplan])
+
+  // Callback ref: sets initial position the instant the overlay mounts
+  const previewRefCallback = useCallback(
+    (el: HTMLDivElement | null) => {
+      previewElRef.current = el
+      if (el) {
+        const { x, y } = previewPosRef.current
+        el.style.left = `${x}%`
+        el.style.top = `${y}%`
+        el.dataset.valid = isInsideFloorplan(x, y) ? 'true' : 'false'
+      }
+    },
+    [isInsideFloorplan],
+  )
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(rafIdRef.current)
+      if (droppingTimerRef.current) clearTimeout(droppingTimerRef.current)
+    }
+  }, [])
+
+  // --- HTML5 drag handlers ---
   const handleDragOver = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer.types)
     const fromPane = types.includes(DRAG_MIME)
@@ -65,23 +160,40 @@ export function MapCanvas({
     e.dataTransfer.dropEffect = fromOs ? 'copy' : 'move'
     if (!contentRef.current) return
     const { x, y } = screenToContentPercent(e.clientX, e.clientY, contentRef.current)
-    setPreviewCoord({ x, y })
+    previewPosRef.current = { x, y }
+    if (phaseRef.current === 'idle') {
+      setPhase('dragging')
+    }
+    schedulePreviewUpdate()
   }
+
   const handleDragLeave = (e: React.DragEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setPreviewCoord(null)
+    if (
+      !e.currentTarget.contains(e.relatedTarget as Node) &&
+      phaseRef.current !== 'dropping'
+    ) {
+      cancelAnimationFrame(rafIdRef.current)
+      setPhase('idle')
     }
   }
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
-    setPreviewCoord(null)
-    if (!contentRef.current) return
+    cancelAnimationFrame(rafIdRef.current)
+    if (!contentRef.current) {
+      setPhase('idle')
+      return
+    }
     const { x, y } = screenToContentPercent(e.clientX, e.clientY, contentRef.current)
     const photoId = e.dataTransfer.getData(DRAG_MIME)
     if (photoId) {
+      setPhase('dropping')
+      if (droppingTimerRef.current) clearTimeout(droppingTimerRef.current)
+      droppingTimerRef.current = setTimeout(() => setPhase('idle'), 220)
       onDropFromLeftPane(photoId, x, y)
       return
     }
+    setPhase('idle')
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files).filter((f) =>
         f.type.startsWith('image/'),
@@ -90,7 +202,7 @@ export function MapCanvas({
     }
   }
 
-  // Refs for callbacks so the closure in handleInteraction always has latest
+  // --- Pin pointer-drag / rotate (unchanged logic) ---
   const callbacksRef = useRef({
     onSelect, onStartDragPin, onMovePin, onEndDragPin,
     onRotatePin, onEndRotatePin,
@@ -221,7 +333,13 @@ export function MapCanvas({
                 onInteraction={handleInteraction(photo.id, photo)}
               />
             ))}
-            <DropPreviewOverlay xPct={previewCoord?.x ?? null} yPct={previewCoord?.y ?? null} />
+            {previewPhase !== 'idle' && (
+              <DropPreviewOverlay
+                ref={previewRefCallback}
+                photo={draggingPhoto}
+                dropping={previewPhase === 'dropping'}
+              />
+            )}
           </div>
         </TransformComponent>
       </TransformWrapper>
