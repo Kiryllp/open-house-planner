@@ -1,0 +1,7 @@
+{
+  "$schema": "./slideshow.schema.json",
+  "_readme": "Authoritative slideshow data. Edit this file (not the scene component) to change order, per-slide duration, captions, transitions. src/Root.tsx computes total runtime from the sum of durationSeconds. Slides are rendered in array order. An empty array is valid during scaffolding.",
+  "defaultTransition": "crossfade",
+  "defaultDurationSeconds": 4,
+  "slides": []
+}

@@ -1,0 +1,8 @@
+node_modules/
+output/
+.env
+.env.local
+.remotion/
+.DS_Store
+# Generated image cache (populated by scripts/pull-supabase-images.mjs)
+public/images/

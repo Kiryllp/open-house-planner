@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Slideshow",
+  "type": "object",
+  "required": ["slides"],
+  "properties": {
+    "defaultTransition": {
+      "type": "string",
+      "enum": ["cut", "crossfade", "kenburns"],
+      "description": "Applied to any slide that omits its own transition."
+    },
+    "defaultDurationSeconds": {
+      "type": "number",
+      "minimum": 0.5,
+      "description": "Applied to any slide that omits its own durationSeconds."
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["imagePath"],
+        "properties": {
+          "imagePath": {
+            "type": "string",
+            "description": "Relative path under public/. E.g. \"images/real/zone_3_lobby.jpg\"."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["real", "concept"],
+            "description": "Photo classification, mirrors open-house-planner's schema."
+          },
+          "zone": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6
+          },
+          "zoneRank": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional on-screen overlay text."
+          },
+          "durationSeconds": {
+            "type": "number",
+            "minimum": 0.5
+          },
+          "transition": {
+            "type": "string",
+            "enum": ["cut", "crossfade", "kenburns"]
+          },
+          "linkedRealImagePath": {
+            "type": "string",
+            "description": "For concept slides: path to the real-photo counterpart. Enables split/compare treatments."
+          }
+        }
+      }
+    }
+  }
+}
